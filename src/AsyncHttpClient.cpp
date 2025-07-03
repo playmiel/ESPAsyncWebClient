@@ -146,7 +146,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
     }
     
     // Check if we've received all expected content
-    if (context->headersComplete && 
+    if (context->headersComplete && !context->responseProcessed &&
         context->expectedContentLength > 0 && 
         context->receivedContentLength >= context->expectedContentLength) {
         processResponse(context);
@@ -154,6 +154,8 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
 }
 
 void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* client) {
+    if (context->responseProcessed) return;
+    
     if (context->headersComplete) {
         processResponse(context);
     } else {
@@ -162,10 +164,12 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
 }
 
 void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, int8_t error) {
+    if (context->responseProcessed) return;
     triggerError(context, error, "Network error");
 }
 
 void AsyncHttpClient::handleTimeout(RequestContext* context, AsyncClient* client) {
+    if (context->responseProcessed) return;
     triggerError(context, -4, "Request timeout");
 }
 
@@ -217,6 +221,9 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
 }
 
 void AsyncHttpClient::processResponse(RequestContext* context) {
+    if (context->responseProcessed) return;
+    context->responseProcessed = true;
+    
     if (context->onSuccess) {
         context->onSuccess(context->response);
     }
@@ -238,6 +245,9 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
 }
 
 void AsyncHttpClient::triggerError(RequestContext* context, int errorCode, const char* errorMessage) {
+    if (context->responseProcessed) return;
+    context->responseProcessed = true;
+    
     if (context->onError) {
         context->onError(errorCode, errorMessage);
     }

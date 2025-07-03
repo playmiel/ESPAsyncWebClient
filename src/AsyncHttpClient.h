@@ -43,13 +43,15 @@ private:
         AsyncClient* client;
         String responseBuffer;
         bool headersComplete;
+        bool responseProcessed;
         size_t expectedContentLength;
         size_t receivedContentLength;
         uint32_t timeoutTimer;
         
         RequestContext() : request(nullptr), response(nullptr), client(nullptr), 
-                          headersComplete(false), expectedContentLength(0), 
-                          receivedContentLength(0), timeoutTimer(0) {}
+                          headersComplete(false), responseProcessed(false),
+                          expectedContentLength(0), receivedContentLength(0), 
+                          timeoutTimer(0) {}
     };
     
     std::vector<HttpHeader> _defaultHeaders;

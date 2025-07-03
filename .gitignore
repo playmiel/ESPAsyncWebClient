@@ -1,0 +1,6 @@
+.pio
+test/
+*.tmp
+*.log
+.vscode/
+.vscode/extensions.json
