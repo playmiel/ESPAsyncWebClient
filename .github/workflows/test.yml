@@ -1,0 +1,165 @@
+name: Library Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run tests weekly to catch dependency issues
+    - cron: '0 0 * * 0'
+
+jobs:
+  test-dependencies:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        platform: [esp32dev, nodemcuv2]
+        async-tcp-version: [latest, "@^1.1.1"]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+    
+    - name: Install PlatformIO
+      run: |
+        python -m pip install --upgrade pip
+        pip install --upgrade platformio
+    
+    - name: Test with AsyncTCP version
+      run: |
+        mkdir -p /tmp/dep_test
+        cp -r src /tmp/dep_test/lib/ESPAsyncWebClient/
+        
+        # Create test sketch
+        cat > /tmp/dep_test/src/main.cpp << 'EOF'
+        #include <Arduino.h>
+        #include <WiFi.h>
+        #include <ESPAsyncWebClient.h>
+        
+        AsyncHttpClient client;
+        
+        void setup() {
+            Serial.begin(115200);
+            // Test basic functionality
+            client.setTimeout(5000);
+            client.setUserAgent("Test/1.0");
+            client.setHeader("Content-Type", "application/json");
+        }
+        
+        void loop() {
+            delay(1000);
+        }
+        EOF
+        
+        # Create platformio.ini with specific dependency version
+        cat > /tmp/dep_test/platformio.ini << EOF
+        [platformio]
+        default_envs = ${{ matrix.platform }}
+        
+        [env]
+        framework = arduino
+        lib_deps = 
+            https://github.com/me-no-dev/AsyncTCP.git${{ matrix.async-tcp-version }}
+            bblanchon/ArduinoJson@^6.21.0
+        
+        [env:esp32dev]
+        platform = espressif32
+        board = esp32dev
+        
+        [env:nodemcuv2]
+        platform = espressif8266
+        board = nodemcuv2
+        lib_deps = 
+            https://github.com/me-no-dev/ESPAsyncTCP.git${{ matrix.async-tcp-version }}
+            bblanchon/ArduinoJson@^6.21.0
+        EOF
+        
+        cd /tmp/dep_test
+        pio run -e ${{ matrix.platform }}
+
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check code formatting
+      run: |
+        # Check for common issues
+        echo "Checking for TODO/FIXME comments..."
+        grep -r "TODO\|FIXME" src/ || true
+        
+        echo "Checking for debug prints..."
+        grep -r "Serial.print.*debug\|DEBUG" src/ || true
+        
+        echo "Checking for memory leaks indicators..."
+        grep -r "new\|malloc" src/ || true
+        
+        echo "Code quality check completed!"
+
+  test-different-arduino-versions:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        platform: [esp32dev, nodemcuv2]
+        framework-version: 
+          - "espressif32@^6.0.0"  # Latest stable
+          - "espressif32@^5.0.0"  # Previous version
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+    
+    - name: Install PlatformIO
+      run: |
+        python -m pip install --upgrade pip
+        pip install --upgrade platformio
+    
+    - name: Test with Arduino framework version
+      run: |
+        mkdir -p /tmp/framework_test
+        cp -r src /tmp/framework_test/lib/ESPAsyncWebClient/
+        
+        cat > /tmp/framework_test/src/main.cpp << 'EOF'
+        #include <Arduino.h>
+        #include <WiFi.h>
+        #include <ESPAsyncWebClient.h>
+        
+        AsyncHttpClient client;
+        
+        void setup() {
+            Serial.begin(115200);
+            Serial.println("Testing framework compatibility");
+        }
+        
+        void loop() {
+            delay(1000);
+        }
+        EOF
+        
+        cat > /tmp/framework_test/platformio.ini << EOF
+        [platformio]
+        default_envs = esp32dev
+        
+        [env:esp32dev]
+        platform = ${{ matrix.framework-version }}
+        board = esp32dev
+        framework = arduino
+        lib_deps = 
+            https://github.com/me-no-dev/AsyncTCP.git
+            bblanchon/ArduinoJson@^6.21.0
+        EOF
+        
+        cd /tmp/framework_test
+        pio run -e esp32dev

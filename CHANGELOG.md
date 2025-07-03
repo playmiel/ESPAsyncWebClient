@@ -45,3 +45,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ESP8266 
 - Arduino IDE and PlatformIO
 - Arduino library format compliant
+
+## [1.0.1] - 2025-06-03
+
+changes since 1.0.0
+
+### Corrected
+- Fiexed compilation warnings 
+- Delete compatibility with ESP8266 core v3.0.0
+
+### Added
+- Workflow github actions for CI
+- CompileTest Exemples
+
+### Compatibility
+
+- ESP32 (all variants)
+- Arduino IDE and PlatformIO
+- Arduino library format compliant

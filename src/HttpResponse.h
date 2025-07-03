@@ -5,21 +5,7 @@
 #include <vector>
 #include "HttpCommon.h"
 
-struct HttpHeader {
-    String name;
-    String value;
-    
-    HttpHeader() {}
-    HttpHeader(const String& n, const String& v) : name(n), value(v) {}
-};
 
-struct HttpHeader {
-    String name;
-    String value;
-    
-    HttpHeader() {}
-    HttpHeader(const String& n, const String& v) : name(n), value(v) {}
-};
 
 class AsyncHttpResponse {
 public:

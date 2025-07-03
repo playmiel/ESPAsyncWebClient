@@ -1,13 +1,12 @@
 {
   "name": "ESPAsyncWebClient",
   "version": "1.0.0",
-  "description": "Asynchronous HTTP client library for ESP32 and ESP8266",
+  "description": "Asynchronous HTTP client library for ESP32 ",
   "keywords": [
     "http",
     "client",
     "async",
     "esp32",
-    "esp8266",
     "arduino",
     "iot"
   ],
@@ -27,14 +26,10 @@
     {
       "name": "AsyncTCP",
       "platforms": ["espressif32"]
-    },
-    {
-      "name": "ESPAsyncTCP",
-      "platforms": ["espressif8266"]
     }
   ],
   "frameworks": ["arduino"],
-  "platforms": ["espressif32", "espressif8266"],
+  "platforms": ["espressif32"],
   "export": {
     "include": [
       "src/*",
