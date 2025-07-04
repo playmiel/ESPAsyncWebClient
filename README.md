@@ -26,8 +26,8 @@ Add to your `platformio.ini`:
 
 ```ini
 lib_deps = 
+    https://github.com/ESP32Async/AsyncTCP.git
     https://github.com/playmiel/ESPAsyncWebClient.git
-    https://github.com/me-no-dev/AsyncTCP.git  ; For ESP32
 ```
 
 ### Arduino IDE
@@ -35,7 +35,7 @@ lib_deps =
 1. Download this repository as ZIP
 2. In Arduino IDE: Sketch → Include Library → Add .ZIP Library
 3. Install the dependencies:
-   - For ESP32: AsyncTCP by Hristo Gochkov
+   - For ESP32: [AsyncTCP by ESP32Async](https://github.com/ESP32Async/AsyncTCP)
 
 
 ## Quick Start
@@ -273,8 +273,43 @@ request->setBody(xmlData);
 
 ## Dependencies
 
-- **ESP32**: [AsyncTCP](https://github.com/me-no-dev/AsyncTCP) 
+- **ESP32**: [AsyncTCP by ESP32Async](https://github.com/ESP32Async/AsyncTCP) 
 - **Arduino Core**: ESP32 (v2.0+) 
+
+> **Note**: This library uses the maintained ESP32Async fork of AsyncTCP, which is more up-to-date and better maintained than the original repository.
+
+## Testing
+
+### Dependency Testing
+
+To test compatibility with different versions of AsyncTCP, use the provided test script:
+
+```bash
+./test_dependencies.sh
+```
+
+This script tests compilation with:
+- AsyncTCP ESP32Async/main (development)
+- AsyncTCP ESP32Async stable
+- AsyncTCP legacy (original me-no-dev repository)
+
+### Manual Testing
+
+You can also test individual environments:
+
+```bash
+# Test with development AsyncTCP
+pio run -e esp32dev_asynctcp_dev
+
+# Test with stable AsyncTCP
+pio run -e test_asynctcp_stable
+
+# Test with legacy AsyncTCP
+pio run -e test_asynctcp_legacy
+
+# Basic compilation test
+pio run -e compile_test
+```
 
 ## License
 
