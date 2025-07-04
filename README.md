@@ -1,6 +1,11 @@
 # ESPAsyncWebClient
 
-An asynchronous HTTP client library for ESP32 and ESP8266 microcontrollers, built on top of AsyncTCP. This library provides a simple and efficient way to make HTTP requests without blocking your main program execution.
+[![Build Examples](https://github.com/yourusername/ESPAsyncWebClient/actions/workflows/build.yml/badge.svg)](https://github.com/yourusername/ESPAsyncWebClient/actions/workflows/build.yml)
+[![Library Tests](https://github.com/yourusername/ESPAsyncWebClient/actions/workflows/test.yml/badge.svg)](https://github.com/yourusername/ESPAsyncWebClient/actions/workflows/test.yml)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![PlatformIO Registry](https://badges.registry.platformio.org/packages/yourusername/library/ESPAsyncWebClient.svg)](https://registry.platformio.org/libraries/yourusername/ESPAsyncWebClient)
+
+An asynchronous HTTP client library for ESP32 microcontrollers, built on top of AsyncTCP. This library provides a simple and efficient way to make HTTP requests without blocking your main program execution.
 
 ## Features
 
@@ -8,7 +13,7 @@ An asynchronous HTTP client library for ESP32 and ESP8266 microcontrollers, buil
 - ✅ **Multiple HTTP methods** - GET, POST, PUT, DELETE support
 - ✅ **Custom headers** - Set global and per-request headers
 - ✅ **Callback-based responses** - Success and error callbacks
-- ✅ **ESP32 & ESP8266 support** - Works on both platforms
+- ✅ **ESP32 - Works on both platforms
 - ✅ **Simple API** - Easy to use with minimal setup
 - ✅ **Configurable timeouts** - Set custom timeout values
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
@@ -21,9 +26,8 @@ Add to your `platformio.ini`:
 
 ```ini
 lib_deps = 
+    https://github.com/ESP32Async/AsyncTCP.git
     https://github.com/playmiel/ESPAsyncWebClient.git
-    https://github.com/me-no-dev/AsyncTCP.git  ; For ESP32
-    https://github.com/me-no-dev/ESPAsyncTCP.git  ; For ESP8266
 ```
 
 ### Arduino IDE
@@ -31,8 +35,8 @@ lib_deps =
 1. Download this repository as ZIP
 2. In Arduino IDE: Sketch → Include Library → Add .ZIP Library
 3. Install the dependencies:
-   - For ESP32: AsyncTCP by Hristo Gochkov
-   - For ESP8266: ESPAsyncTCP by Hristo Gochkov
+   - For ESP32: [AsyncTCP by ESP32Async](https://github.com/ESP32Async/AsyncTCP)
+
 
 ## Quick Start
 
@@ -269,9 +273,39 @@ request->setBody(xmlData);
 
 ## Dependencies
 
-- **ESP32**: [AsyncTCP](https://github.com/me-no-dev/AsyncTCP) 
-- **ESP8266**: [ESPAsyncTCP](https://github.com/me-no-dev/ESPAsyncTCP)
-- **Arduino Core**: ESP32 (v2.0+) or ESP8266 (v3.0+)
+- **ESP32**: [AsyncTCP by ESP32Async](https://github.com/ESP32Async/AsyncTCP) 
+- **Arduino Core**: ESP32 (v2.0+) 
+
+> **Note**: This library uses the maintained ESP32Async fork of AsyncTCP, which is more up-to-date and better maintained than the original repository.
+
+## Testing
+
+### Dependency Testing
+
+To test compatibility with different versions of AsyncTCP, use the provided test script:
+
+```bash
+./test_dependencies.sh
+```
+
+This script tests compilation with:
+- AsyncTCP ESP32Async/main (development)
+- AsyncTCP ESP32Async stable
+
+### Manual Testing
+
+You can also test individual environments:
+
+```bash
+# Test with development AsyncTCP
+pio run -e esp32dev_asynctcp_dev
+
+# Test with stable AsyncTCP
+pio run -e test_asynctcp_stable
+
+# Basic compilation test
+pio run -e compile_test
+```
 
 ## License
 
