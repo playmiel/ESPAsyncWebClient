@@ -15,7 +15,7 @@ jobs:
     
     strategy:
       matrix:
-        platform: [esp32dev, nodemcuv2]
+        platform: [esp32dev]
         async-tcp-version: [latest, "@^1.1.1"]
     
     steps:
@@ -101,7 +101,7 @@ jobs:
     
     strategy:
       matrix:
-        platform: [esp32dev, nodemcuv2]
+        platform: [esp32dev]
         framework-version: 
           - "espressif32@^6.0.0"  # Latest stable
           - "espressif32@^5.0.0"  # Previous version
