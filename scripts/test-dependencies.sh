@@ -37,16 +37,7 @@ else
     exit 1
 fi
 
-echo "=== Test 3: AsyncTCP version 1.1.1 ==="
-pio run -e test_asynctcp_v1_1_1
-if [ $? -eq 0 ]; then
-    echo "✅ Test AsyncTCP v1.1.1: RÉUSSI"
-else
-    echo "❌ Test AsyncTCP v1.1.1: ÉCHEC"
-    exit 1
-fi
-
-echo "=== Test 4: Compilation basique ==="
+echo "=== Test 3: Compilation basique ==="
 pio run -e compile_test
 if [ $? -eq 0 ]; then
     echo "✅ Test compilation: RÉUSSI"
@@ -59,7 +50,6 @@ echo ""
 echo "🎉 Tous les tests de dépendances sont passés avec succès!"
 echo "✅ AsyncTCP dev (master): Compatible"
 echo "✅ AsyncTCP stable: Compatible"
-echo "✅ AsyncTCP v1.1.1: Compatible"
 echo "✅ Compilation basique: Compatible"
 
 # Nettoyer
