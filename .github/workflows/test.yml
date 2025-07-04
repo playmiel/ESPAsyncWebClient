@@ -71,13 +71,6 @@ jobs:
         [env:esp32dev]
         platform = espressif32
         board = esp32dev
-        
-        [env:nodemcuv2]
-        platform = espressif8266
-        board = nodemcuv2
-        lib_deps = 
-            https://github.com/me-no-dev/ESPAsyncTCP.git${{ matrix.async-tcp-version }}
-            bblanchon/ArduinoJson@^6.21.0
         EOF
         
         cd /tmp/dep_test

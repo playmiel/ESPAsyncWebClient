@@ -46,13 +46,6 @@ jobs:
         [env:esp32dev]
         platform = espressif32
         board = esp32dev
-        
-        [env:nodemcuv2]
-        platform = espressif8266
-        board = nodemcuv2
-        lib_deps = 
-            https://github.com/me-no-dev/ESPAsyncTCP.git
-            bblanchon/ArduinoJson@^6.21.0
         EOF
             
             cd /tmp/release_test_$example_name
@@ -72,13 +65,12 @@ jobs:
         prerelease: false
         body: |
           ## Changes in this release
-          - All examples successfully build for ESP32 and ESP8266
+          - All examples successfully build for ESP32
           - Library structure validated
           - Dependencies verified
           
           ## Platforms tested
           - ESP32 (espressif32)
-          - ESP8266 (espressif8266)
           
           ## Dependencies
           - AsyncTCP

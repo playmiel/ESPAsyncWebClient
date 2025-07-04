@@ -78,7 +78,6 @@ declare -A environments=(
     ["compile_test"]="Test de compilation basique (sans réseau)"
     ["esp32dev_asynctcp_dev"]="AsyncTCP ESP32Async/main (développement)"
     ["test_asynctcp_stable"]="AsyncTCP ESP32Async stable"
-    ["test_asynctcp_legacy"]="AsyncTCP legacy (me-no-dev)"
 )
 
 # Variables pour le résumé

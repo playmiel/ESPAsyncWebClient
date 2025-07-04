@@ -63,7 +63,7 @@ jobs:
         default_envs = test_env
         
         [env:test_env]
-        platform = ${{ matrix.platform == 'esp32dev' && 'espressif32' || 'espressif8266' }}
+        platform = ${{ matrix.platform == 'esp32dev' && 'espressif32' }}
         board = ${{ matrix.platform }}
         framework = arduino
         monitor_speed = 115200
@@ -118,11 +118,9 @@ jobs:
         # Create minimal test source
         cat > "$test_dir/src/main.cpp" << 'EOF'
         #include <Arduino.h>
-        #ifdef ESP32
-            #include <WiFi.h>
-        #elif defined(ESP8266)
-            #include <ESP8266WiFi.h>
-        #endif
+        
+        #include <WiFi.h>
+        #include <AsyncTCP.h>
         #include <ESPAsyncWebClient.h>
         
         AsyncHttpClient client;
@@ -160,13 +158,6 @@ jobs:
         board = esp32dev
         lib_deps = 
             https://github.com/me-no-dev/AsyncTCP.git
-            bblanchon/ArduinoJson@^6.21.0
-        
-        [env:nodemcuv2]
-        platform = espressif8266
-        board = nodemcuv2
-        lib_deps = 
-            https://github.com/me-no-dev/ESPAsyncTCP.git
             bblanchon/ArduinoJson@^6.21.0
         EOF
         

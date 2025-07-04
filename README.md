@@ -291,7 +291,6 @@ To test compatibility with different versions of AsyncTCP, use the provided test
 This script tests compilation with:
 - AsyncTCP ESP32Async/main (development)
 - AsyncTCP ESP32Async stable
-- AsyncTCP legacy (original me-no-dev repository)
 
 ### Manual Testing
 
@@ -303,9 +302,6 @@ pio run -e esp32dev_asynctcp_dev
 
 # Test with stable AsyncTCP
 pio run -e test_asynctcp_stable
-
-# Test with legacy AsyncTCP
-pio run -e test_asynctcp_legacy
 
 # Basic compilation test
 pio run -e compile_test
