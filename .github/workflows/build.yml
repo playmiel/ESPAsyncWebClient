@@ -71,7 +71,7 @@ jobs:
             -DCOMPILE_TEST_ONLY
             -Wall
         lib_deps = 
-            ${{ matrix.platform == 'esp32dev' && 'https://github.com/me-no-dev/AsyncTCP.git' || 'https://github.com/me-no-dev/ESPAsyncTCP.git' }}
+            ${{ matrix.platform == 'esp32dev' && 'https://github.com/ESP32Async/AsyncTCP.git' }}
             bblanchon/ArduinoJson@^6.21.0
         EOF
         
@@ -157,7 +157,7 @@ jobs:
         platform = espressif32
         board = esp32dev
         lib_deps = 
-            https://github.com/me-no-dev/AsyncTCP.git
+            https://github.com/ESP32Async/AsyncTCP.git
             bblanchon/ArduinoJson@^6.21.0
         EOF
         

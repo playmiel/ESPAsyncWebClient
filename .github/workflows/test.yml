@@ -33,8 +33,9 @@ jobs:
     
     - name: Test with AsyncTCP version
       run: |
-        mkdir -p /tmp/dep_test
-        cp -r src /tmp/dep_test/lib/ESPAsyncWebClient/
+        mkdir -p /tmp/dep_test/lib/ESPAsyncWebClient
+        mkdir -p /tmp/dep_test/src
+        cp -r src/* /tmp/dep_test/lib/ESPAsyncWebClient/
         
         # Create test sketch
         cat > /tmp/dep_test/src/main.cpp << 'EOF'
@@ -65,7 +66,7 @@ jobs:
         [env]
         framework = arduino
         lib_deps = 
-            https://github.com/me-no-dev/AsyncTCP.git${{ matrix.async-tcp-version }}
+            https://github.com/ESP32Async/AsyncTCP.git${{ matrix.async-tcp-version }}
             bblanchon/ArduinoJson@^6.21.0
         
         [env:esp32dev]
@@ -121,8 +122,9 @@ jobs:
     
     - name: Test with Arduino framework version
       run: |
-        mkdir -p /tmp/framework_test
-        cp -r src /tmp/framework_test/lib/ESPAsyncWebClient/
+        mkdir -p /tmp/framework_test/lib/ESPAsyncWebClient
+        mkdir -p /tmp/framework_test/src
+        cp -r src/* /tmp/framework_test/lib/ESPAsyncWebClient/
         
         cat > /tmp/framework_test/src/main.cpp << 'EOF'
         #include <Arduino.h>
@@ -150,7 +152,7 @@ jobs:
         board = esp32dev
         framework = arduino
         lib_deps = 
-            https://github.com/me-no-dev/AsyncTCP.git
+            https://github.com/ESP32Async/AsyncTCP.git
             bblanchon/ArduinoJson@^6.21.0
         EOF
         
