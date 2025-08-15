@@ -78,11 +78,23 @@ bool AsyncHttpRequest::parseUrl(const String& url) {
         _port = 80;
     }
     
-    // Find path separator
+    // Find path and query separators
     int pathIndex = urlCopy.indexOf('/');
+    int queryIndex = urlCopy.indexOf('?');
+
+    // If there is no explicit path, handle URLs like "example.com?foo=bar"
     if (pathIndex == -1) {
-        _host = urlCopy;
-        _path = "/";
+        if (queryIndex == -1) {
+            _host = urlCopy;
+            _path = "/";
+        } else {
+            _host = urlCopy.substring(0, queryIndex);
+            _path = String('/') + urlCopy.substring(queryIndex);
+        }
+    } else if (queryIndex != -1 && queryIndex < pathIndex) {
+        // Query appears before path separator
+        _host = urlCopy.substring(0, queryIndex);
+        _path = String('/') + urlCopy.substring(queryIndex);
     } else {
         _host = urlCopy.substring(0, pathIndex);
         _path = urlCopy.substring(pathIndex);
