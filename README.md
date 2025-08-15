@@ -68,9 +68,15 @@ void setup() {
 }
 
 void loop() {
+#if !ASYNC_TCP_HAS_TIMEOUT
+    client.loop();
+#endif
     delay(1000);
 }
 ```
+
+If your AsyncTCP library does not provide native timeout support (`setTimeout`),
+remember to call `client.loop()` regularly to handle manual timeout checks.
 
 ## API Reference
 

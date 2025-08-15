@@ -39,5 +39,8 @@ void setup() {
 }
 
 void loop() {
+#if !ASYNC_TCP_HAS_TIMEOUT
+    client.loop();
+#endif
     delay(1000);
 }

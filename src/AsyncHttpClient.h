@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <functional>
+#include <vector>
 #include "HttpRequest.h"
 #include "HttpResponse.h"
 #include "HttpCommon.h"
@@ -45,28 +46,42 @@ private:
         bool responseProcessed;
         size_t expectedContentLength;
         size_t receivedContentLength;
-        uint32_t timeoutTimer;
         
-        RequestContext() : request(nullptr), response(nullptr), client(nullptr), 
-                          headersComplete(false), responseProcessed(false),
-                          expectedContentLength(0), receivedContentLength(0), 
-                          timeoutTimer(0) {}
+#if !ASYNC_TCP_HAS_TIMEOUT
+        uint32_t timeoutTimer;
+#endif
+
+        RequestContext()
+            : request(nullptr), response(nullptr), client(nullptr),
+              headersComplete(false), responseProcessed(false),
+              expectedContentLength(0), receivedContentLength(0)
+#if !ASYNC_TCP_HAS_TIMEOUT
+              , timeoutTimer(0)
+#endif
+        {}
     };
     
     std::vector<HttpHeader> _defaultHeaders;
     uint32_t _defaultTimeout;
     String _defaultUserAgent;
     
+#if !ASYNC_TCP_HAS_TIMEOUT
+public:
+    void loop();
+
+private:
+    std::vector<RequestContext*> _activeRequests;
+#endif
+
     // Internal methods
-    void makeRequest(HttpMethod method, const char* url, const char* data, 
+    void makeRequest(HttpMethod method, const char* url, const char* data,
                     SuccessCallback onSuccess, ErrorCallback onError);
     void executeRequest(RequestContext* context);
     void handleConnect(RequestContext* context, AsyncClient* client);
     void handleData(RequestContext* context, AsyncClient* client, char* data, size_t len);
     void handleDisconnect(RequestContext* context, AsyncClient* client);
     void handleError(RequestContext* context, AsyncClient* client, int8_t error);
-    void handleTimeout(RequestContext* context, AsyncClient* client);
-    
+
     bool parseResponseHeaders(RequestContext* context, const String& headerData);
     void processResponse(RequestContext* context);
     void cleanup(RequestContext* context);

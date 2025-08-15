@@ -1,4 +1,5 @@
 #include "AsyncHttpClient.h"
+#include <algorithm>
 
 AsyncHttpClient::AsyncHttpClient() 
     : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.0") {
@@ -82,36 +83,39 @@ void AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onSucce
 
 void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->client = new AsyncClient();
-    
+
     // Set up callbacks
     context->client->onConnect([this, context](void* arg, AsyncClient* client) {
         handleConnect(context, client);
     });
-    
+
     context->client->onData([this, context](void* arg, AsyncClient* client, void* data, size_t len) {
         handleData(context, client, (char*)data, len);
     });
-    
+
     context->client->onDisconnect([this, context](void* arg, AsyncClient* client) {
         handleDisconnect(context, client);
     });
-    
+
     context->client->onError([this, context](void* arg, AsyncClient* client, int8_t error) {
         handleError(context, client, error);
     });
-    
+
+#if ASYNC_TCP_HAS_TIMEOUT
+    context->client->setTimeout(context->request->getTimeout());
     context->client->onTimeout([this, context](void* arg, AsyncClient* client, uint32_t time) {
-        handleTimeout(context, client);
+        triggerError(context, REQUEST_TIMEOUT, "Request timeout");
     });
-    
+#else
+    context->timeoutTimer = millis();
+    _activeRequests.push_back(context);
+#endif
+
     // Start connection
     if (!context->client->connect(context->request->getHost().c_str(), context->request->getPort())) {
         triggerError(context, CONNECTION_FAILED, "Failed to initiate connection");
         return;
     }
-    
-    // Set timeout
-    context->timeoutTimer = millis();
 }
 
 void AsyncHttpClient::handleConnect(RequestContext* context, AsyncClient* client) {
@@ -166,11 +170,6 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
 void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, int8_t error) {
     if (context->responseProcessed) return;
     triggerError(context, static_cast<HttpClientError>(error), "Network error");
-}
-
-void AsyncHttpClient::handleTimeout(RequestContext* context, AsyncClient* client) {
-    if (context->responseProcessed) return;
-    triggerError(context, REQUEST_TIMEOUT, "Request timeout");
 }
 
 bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String& headerData) {
@@ -241,15 +240,36 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
     if (context->response) {
         delete context->response;
     }
+#if !ASYNC_TCP_HAS_TIMEOUT
+    auto it = std::find(_activeRequests.begin(), _activeRequests.end(), context);
+    if (it != _activeRequests.end()) {
+        _activeRequests.erase(it);
+    }
+#endif
     delete context;
 }
 
 void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage) {
     if (context->responseProcessed) return;
     context->responseProcessed = true;
-    
+
     if (context->onError) {
         context->onError(errorCode, errorMessage);
     }
     cleanup(context);
 }
+
+#if !ASYNC_TCP_HAS_TIMEOUT
+void AsyncHttpClient::loop() {
+    uint32_t now = millis();
+    for (auto it = _activeRequests.begin(); it != _activeRequests.end(); ) {
+        RequestContext* ctx = *it;
+        if (!ctx->responseProcessed && (now - ctx->timeoutTimer) >= ctx->request->getTimeout()) {
+            triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
+            it = _activeRequests.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+#endif
