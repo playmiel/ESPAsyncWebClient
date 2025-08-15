@@ -1,4 +1,5 @@
 #include "AsyncHttpClient.h"
+#include <algorithm>
 
 AsyncHttpClient::AsyncHttpClient() 
     : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.0") {
@@ -76,7 +77,8 @@ void AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onSucce
     context->response = new AsyncHttpResponse();
     context->onSuccess = onSuccess;
     context->onError = onError;
-    
+
+    _activeRequests.push_back(context);
     executeRequest(context);
 }
 
@@ -109,8 +111,8 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
         triggerError(context, -1, "Failed to initiate connection");
         return;
     }
-    
-    // Set timeout
+
+    // Initialize timeout timer
     context->timeoutTimer = millis();
 }
 
@@ -120,6 +122,7 @@ void AsyncHttpClient::handleConnect(RequestContext* context, AsyncClient* client
 }
 
 void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, char* data, size_t len) {
+    context->timeoutTimer = millis();
     context->responseBuffer.concat(data, len);
     
     if (!context->headersComplete) {
@@ -171,6 +174,19 @@ void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, 
 void AsyncHttpClient::handleTimeout(RequestContext* context, AsyncClient* client) {
     if (context->responseProcessed) return;
     triggerError(context, -4, "Request timeout");
+}
+
+void AsyncHttpClient::loop() {
+    unsigned long now = millis();
+    for (size_t i = 0; i < _activeRequests.size(); ) {
+        RequestContext* ctx = _activeRequests[i];
+        if (!ctx->responseProcessed &&
+            now - ctx->timeoutTimer > ctx->request->getTimeout()) {
+            triggerError(ctx, -4, "Request timeout");
+        } else {
+            ++i;
+        }
+    }
 }
 
 bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String& headerData) {
@@ -240,6 +256,10 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
     }
     if (context->response) {
         delete context->response;
+    }
+    auto it = std::find(_activeRequests.begin(), _activeRequests.end(), context);
+    if (it != _activeRequests.end()) {
+        _activeRequests.erase(it);
     }
     delete context;
 }

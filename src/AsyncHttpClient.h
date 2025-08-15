@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <functional>
+#include <vector>
 #include "HttpRequest.h"
 #include "HttpResponse.h"
 
@@ -28,9 +29,14 @@ public:
     void setHeader(const char* name, const char* value);
     void setTimeout(uint32_t timeout);
     void setUserAgent(const char* userAgent);
-    
+
     // Advanced request method
     void request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+
+    // Periodic maintenance. Should be called regularly from the Arduino loop
+    // to handle request timeouts when AsyncTCP does not provide its own
+    // timeout mechanism.
+    void loop();
 
 private:
     struct RequestContext {
@@ -55,6 +61,8 @@ private:
     std::vector<HttpHeader> _defaultHeaders;
     uint32_t _defaultTimeout;
     String _defaultUserAgent;
+
+    std::vector<RequestContext*> _activeRequests;
     
     // Internal methods
     void makeRequest(HttpMethod method, const char* url, const char* data, 
