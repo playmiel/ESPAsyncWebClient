@@ -22,8 +22,8 @@ void setup() {
             Serial.printf("Status: %d\n", response->getStatusCode());
             Serial.printf("Body: %s\n", response->getBody().c_str());
         },
-        [](int error, const char* message) {
-            Serial.printf("Error: %d - %s\n", error, message);
+        [](HttpClientError error, const char* message) {
+            Serial.printf("Error: %s (%d)\n", httpClientErrorToString(error), (int)error);
         }
     );
 }

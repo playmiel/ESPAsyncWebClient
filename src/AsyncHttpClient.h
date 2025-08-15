@@ -5,6 +5,7 @@
 #include <functional>
 #include "HttpRequest.h"
 #include "HttpResponse.h"
+#include "HttpCommon.h"
 
 
     #include <AsyncTCP.h>
@@ -13,7 +14,7 @@
 class AsyncHttpClient {
 public:
     typedef std::function<void(AsyncHttpResponse*)> SuccessCallback;
-    typedef std::function<void(int, const char*)> ErrorCallback;
+    typedef std::function<void(HttpClientError, const char*)> ErrorCallback;
 
     AsyncHttpClient();
     ~AsyncHttpClient();
@@ -69,7 +70,7 @@ private:
     bool parseResponseHeaders(RequestContext* context, const String& headerData);
     void processResponse(RequestContext* context);
     void cleanup(RequestContext* context);
-    void triggerError(RequestContext* context, int errorCode, const char* errorMessage);
+    void triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage);
 };
 
 #endif // ASYNC_HTTP_CLIENT_H
