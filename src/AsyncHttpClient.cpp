@@ -168,7 +168,7 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
 
 void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, int8_t error) {
     if (context->responseProcessed) return;
-    triggerError(context, error, "Network error");
+    triggerError(context, -error, client->errorToString(error));
 }
 
 void AsyncHttpClient::handleTimeout(RequestContext* context, AsyncClient* client) {
