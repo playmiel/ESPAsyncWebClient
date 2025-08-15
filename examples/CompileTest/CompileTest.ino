@@ -78,8 +78,8 @@ void testHttpMethodsCompilation() {
         (void)header;  // Suppress unused variable warning
     };
     
-    auto errorCallback = [](int error, const char* message) {
-        Serial.printf("Error callback - Code: %d, Message: %s\n", error, message);
+    auto errorCallback = [](HttpClientError error, const char* message) {
+        Serial.printf("Error callback - Code: %d, Message: %s\n", (int)error, httpClientErrorToString(error));
     };
     
     // Test all HTTP methods compilation (won't execute in CI)
@@ -118,8 +118,8 @@ void loop() {
                     [](AsyncHttpResponse* response) {
                         Serial.printf("✓ GET request successful - Status: %d\n", response->getStatusCode());
                     },
-                    [](int error, const char* message) {
-                        Serial.printf("✗ GET request failed - Error: %d, Message: %s\n", error, message);
+                    [](HttpClientError error, const char* message) {
+                        Serial.printf("✗ GET request failed - Error: %s (%d)\n", httpClientErrorToString(error), (int)error);
                     }
                 );
                 testExecuted = true;

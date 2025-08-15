@@ -9,7 +9,7 @@ int responseCount = 0;
 void onResponse(AsyncHttpResponse* response, const String& requestName) {
     responseCount++;
     Serial.printf("[%s] Response %d received!\n", requestName.c_str(), responseCount);
-    Serial.printf("[%s] Status: %d %s\n", requestName.c_str(), 
+    Serial.printf("[%s] Status: %d %s\n", requestName.c_str(),
                   response->getStatusCode(), response->getStatusText().c_str());
     Serial.printf("[%s] Body length: %d\n", requestName.c_str(), response->getBody().length());
     
@@ -18,9 +18,9 @@ void onResponse(AsyncHttpResponse* response, const String& requestName) {
     }
 }
 
-void onError(int error, const char* message, const String& requestName) {
+void onError(HttpClientError error, const char* message, const String& requestName) {
     responseCount++;
-    Serial.printf("[%s] Error %d: %s\n", requestName.c_str(), error, message);
+    Serial.printf("[%s] Error %d: %s\n", requestName.c_str(), (int)error, httpClientErrorToString(error));
     
     if (responseCount >= requestCount) {
         Serial.println("All requests completed!");
@@ -44,28 +44,28 @@ void setup() {
     requestCount++;
     client.get("http://httpbin.org/get",
         [](AsyncHttpResponse* response) { onResponse(response, "GET"); },
-        [](int error, const char* message) { onError(error, message, "GET"); }
+        [](HttpClientError error, const char* message) { onError(error, message, "GET"); }
     );
     
     // Request 2: POST request
     requestCount++;
     client.post("http://httpbin.org/post", "data=test",
         [](AsyncHttpResponse* response) { onResponse(response, "POST"); },
-        [](int error, const char* message) { onError(error, message, "POST"); }
+        [](HttpClientError error, const char* message) { onError(error, message, "POST"); }
     );
     
     // Request 3: Another GET to different endpoint
     requestCount++;
     client.get("http://httpbin.org/headers",
         [](AsyncHttpResponse* response) { onResponse(response, "HEADERS"); },
-        [](int error, const char* message) { onError(error, message, "HEADERS"); }
+        [](HttpClientError error, const char* message) { onError(error, message, "HEADERS"); }
     );
     
     // Request 4: DELETE request
     requestCount++;
     client.del("http://httpbin.org/delete",
         [](AsyncHttpResponse* response) { onResponse(response, "DELETE"); },
-        [](int error, const char* message) { onError(error, message, "DELETE"); }
+        [](HttpClientError error, const char* message) { onError(error, message, "DELETE"); }
     );
     
     Serial.printf("Initiated %d simultaneous requests\n", requestCount);

@@ -24,7 +24,7 @@ void setup() {
             Serial.printf("Status: %d\n", response->getStatusCode());
             Serial.printf("Content-Type: %s\n", response->getHeader("Content-Type").c_str());
             Serial.printf("Body length: %d\n", response->getBody().length());
-            
+
             // Print first 500 characters of response
             String body = response->getBody();
             if (body.length() > 500) {
@@ -32,8 +32,8 @@ void setup() {
             }
             Serial.printf("Body: %s\n", body.c_str());
         },
-        [](int error, const char* message) {
-            Serial.printf("POST Error: %d - %s\n", error, message);
+        [](HttpClientError error, const char* message) {
+            Serial.printf("POST Error: %s (%d)\n", httpClientErrorToString(error), (int)error);
         }
     );
 }

@@ -26,19 +26,19 @@ void setup() {
         [](AsyncHttpResponse* response) {
             Serial.println("Request with custom headers successful!");
             Serial.printf("Status: %d\n", response->getStatusCode());
-            
+
             // Print response headers
             Serial.println("\nResponse Headers:");
             const auto& headers = response->getHeaders();
             for (const auto& header : headers) {
                 Serial.printf("  %s: %s\n", header.name.c_str(), header.value.c_str());
             }
-            
+
             // Print the body which should show our request headers
             Serial.printf("\nResponse Body:\n%s\n", response->getBody().c_str());
         },
-        [](int error, const char* message) {
-            Serial.printf("Error: %d - %s\n", error, message);
+        [](HttpClientError error, const char* message) {
+            Serial.printf("Error: %s (%d)\n", httpClientErrorToString(error), (int)error);
         }
     );
     
@@ -56,7 +56,7 @@ void setup() {
             Serial.println("\nCustom JSON POST request successful!");
             Serial.printf("Status: %d\n", response->getStatusCode());
             Serial.printf("Content-Type: %s\n", response->getHeader("Content-Type").c_str());
-            
+
             // Print first 800 characters of response
             String body = response->getBody();
             if (body.length() > 800) {
@@ -64,8 +64,8 @@ void setup() {
             }
             Serial.printf("Response: %s\n", body.c_str());
         },
-        [](int error, const char* message) {
-            Serial.printf("Custom request error: %d - %s\n", error, message);
+        [](HttpClientError error, const char* message) {
+            Serial.printf("Custom request error: %s (%d)\n", httpClientErrorToString(error), (int)error);
         }
     );
 }

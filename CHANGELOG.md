@@ -57,9 +57,14 @@ changes since 1.0.0
 ### Added
 - Workflow github actions for CI
 - CompileTest Exemples
+- HttpClientError enumeration and error string utility
+
+### Changed
+- Error callbacks now use HttpClientError enumeration instead of raw integers
 
 ### Compatibility
 
 - ESP32 (all variants)
 - Arduino IDE and PlatformIO
 - Arduino library format compliant
+

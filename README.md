@@ -61,8 +61,8 @@ void setup() {
             Serial.printf("Success! Status: %d\n", response->getStatusCode());
             Serial.printf("Body: %s\n", response->getBody().c_str());
         },
-        [](int error, const char* message) {
-            Serial.printf("Error: %d - %s\n", error, message);
+        [](HttpClientError error, const char* message) {
+            Serial.printf("Error: %s (%d)\n", httpClientErrorToString(error), (int)error);
         }
     );
 }
@@ -112,7 +112,7 @@ void setUserAgent(const char* userAgent);
 
 ```cpp
 typedef std::function<void(AsyncHttpResponse*)> SuccessCallback;
-typedef std::function<void(int, const char*)> ErrorCallback;
+typedef std::function<void(HttpClientError, const char*)> ErrorCallback;
 ```
 
 ### AsyncHttpResponse Class
@@ -210,24 +210,24 @@ client.request(request, onSuccess);
 
 Error codes passed to error callbacks:
 
-- `-1`: Failed to initiate connection
-- `-2`: Failed to parse response headers  
-- `-3`: Connection closed before headers received
-- `-4`: Request timeout
+- `CONNECTION_FAILED (-1)`: Failed to initiate connection
+- `HEADER_PARSE_FAILED (-2)`: Failed to parse response headers
+- `CONNECTION_CLOSED (-3)`: Connection closed before headers received
+- `REQUEST_TIMEOUT (-4)`: Request timeout
 - `>0`: AsyncTCP error codes
 
 ```cpp
 client.get("http://example.com", onSuccess,
-    [](int error, const char* message) {
+    [](HttpClientError error, const char* message) {
         switch(error) {
-            case -1:
+            case CONNECTION_FAILED:
                 Serial.println("Connection failed");
                 break;
-            case -4:
+            case REQUEST_TIMEOUT:
                 Serial.println("Request timed out");
                 break;
             default:
-                Serial.printf("Network error: %d - %s\n", error, message);
+                Serial.printf("Network error: %s (%d)\n", httpClientErrorToString(error), (int)error);
         }
     }
 );
