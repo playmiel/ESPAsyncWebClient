@@ -100,6 +100,9 @@ void testHttpMethodsCompilation() {
 }
 
 void loop() {
+#if !ASYNC_TCP_HAS_TIMEOUT
+    client.loop();
+#endif
     // Simple heartbeat to show the program is running
     static unsigned long lastHeartbeat = 0;
     unsigned long now = millis();
