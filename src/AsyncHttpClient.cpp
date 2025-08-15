@@ -105,7 +105,10 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->client->onTimeout([this, context](void* arg, AsyncClient* client, uint32_t time) {
         handleTimeout(context, client);
     });
-    
+
+    // Use AsyncTCP's built-in timeout mechanism when available
+    context->client->setTimeout(context->request->getTimeout());
+
     // Start connection
     if (!context->client->connect(context->request->getHost().c_str(), context->request->getPort())) {
         triggerError(context, -1, "Failed to initiate connection");
