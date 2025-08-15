@@ -37,8 +37,8 @@ void setup() {
             // Print the body which should show our request headers
             Serial.printf("\nResponse Body:\n%s\n", response->getBody().c_str());
         },
-        [](int error, const char* message) {
-            Serial.printf("Error: %d - %s\n", error, message);
+        [](HttpClientError error, const char* message) {
+            Serial.printf("Error: %d - %s\n", static_cast<int>(error), message);
         }
     );
     
@@ -64,12 +64,13 @@ void setup() {
             }
             Serial.printf("Response: %s\n", body.c_str());
         },
-        [](int error, const char* message) {
-            Serial.printf("Custom request error: %d - %s\n", error, message);
+        [](HttpClientError error, const char* message) {
+            Serial.printf("Custom request error: %d - %s\n", static_cast<int>(error), message);
         }
     );
 }
 
 void loop() {
+    client.loop();
     delay(1000);
 }

@@ -61,13 +61,14 @@ void setup() {
             Serial.printf("Success! Status: %d\n", response->getStatusCode());
             Serial.printf("Body: %s\n", response->getBody().c_str());
         },
-        [](int error, const char* message) {
-            Serial.printf("Error: %d - %s\n", error, message);
+        [](HttpClientError error, const char* message) {
+            Serial.printf("Error: %d - %s\n", static_cast<int>(error), message);
         }
     );
 }
 
 void loop() {
+    client.loop();
     delay(1000);
 }
 ```
@@ -112,7 +113,7 @@ void setUserAgent(const char* userAgent);
 
 ```cpp
 typedef std::function<void(AsyncHttpResponse*)> SuccessCallback;
-typedef std::function<void(int, const char*)> ErrorCallback;
+typedef std::function<void(HttpClientError, const char*)> ErrorCallback;
 ```
 
 ### AsyncHttpResponse Class
@@ -210,24 +211,24 @@ client.request(request, onSuccess);
 
 Error codes passed to error callbacks:
 
-- `-1`: Failed to initiate connection
-- `-2`: Failed to parse response headers  
-- `-3`: Connection closed before headers received
-- `-4`: Request timeout
-- `>0`: AsyncTCP error codes
+- `HttpClientError::ConnectionFailed`: Failed to initiate connection
+- `HttpClientError::ParseResponseHeadersFailed`: Failed to parse response headers
+- `HttpClientError::ConnectionClosed`: Connection closed before headers received
+- `HttpClientError::RequestTimeout`: Request timeout
+- `HttpClientError::NetworkError`: Underlying AsyncTCP error
 
 ```cpp
 client.get("http://example.com", onSuccess,
-    [](int error, const char* message) {
+    [](HttpClientError error, const char* message) {
         switch(error) {
-            case -1:
+            case HttpClientError::ConnectionFailed:
                 Serial.println("Connection failed");
                 break;
-            case -4:
+            case HttpClientError::RequestTimeout:
                 Serial.println("Request timed out");
                 break;
             default:
-                Serial.printf("Network error: %d - %s\n", error, message);
+                Serial.printf("Network error: %d - %s\n", static_cast<int>(error), message);
         }
     }
 );

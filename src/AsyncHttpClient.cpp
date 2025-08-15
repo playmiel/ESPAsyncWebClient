@@ -111,7 +111,7 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
 
     // Start connection
     if (!context->client->connect(context->request->getHost().c_str(), context->request->getPort())) {
-        triggerError(context, -1, "Failed to initiate connection");
+        triggerError(context, HttpClientError::ConnectionFailed, "Failed to initiate connection");
         return;
     }
 
@@ -141,7 +141,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                 }
                 context->responseBuffer = "";
             } else {
-                triggerError(context, -2, "Failed to parse response headers");
+                triggerError(context, HttpClientError::ParseResponseHeadersFailed, "Failed to parse response headers");
                 return;
             }
         }
@@ -165,18 +165,18 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
     if (context->headersComplete) {
         processResponse(context);
     } else {
-        triggerError(context, -3, "Connection closed before headers received");
+        triggerError(context, HttpClientError::ConnectionClosed, "Connection closed before headers received");
     }
 }
 
 void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, int8_t error) {
     if (context->responseProcessed) return;
-    triggerError(context, -error, client->errorToString(error));
+    triggerError(context, HttpClientError::NetworkError, client->errorToString(error));
 }
 
 void AsyncHttpClient::handleTimeout(RequestContext* context, AsyncClient* client) {
     if (context->responseProcessed) return;
-    triggerError(context, -4, "Request timeout");
+    triggerError(context, HttpClientError::RequestTimeout, "Request timeout");
 }
 
 void AsyncHttpClient::loop() {
@@ -185,7 +185,7 @@ void AsyncHttpClient::loop() {
         RequestContext* ctx = _activeRequests[i];
         if (!ctx->responseProcessed &&
             now - ctx->timeoutTimer > ctx->request->getTimeout()) {
-            triggerError(ctx, -4, "Request timeout");
+            triggerError(ctx, HttpClientError::RequestTimeout, "Request timeout");
         } else {
             ++i;
         }
@@ -267,10 +267,10 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
     delete context;
 }
 
-void AsyncHttpClient::triggerError(RequestContext* context, int errorCode, const char* errorMessage) {
+void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage) {
     if (context->responseProcessed) return;
     context->responseProcessed = true;
-    
+
     if (context->onError) {
         context->onError(errorCode, errorMessage);
     }

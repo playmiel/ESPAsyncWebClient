@@ -78,8 +78,8 @@ void testHttpMethodsCompilation() {
         (void)header;  // Suppress unused variable warning
     };
     
-    auto errorCallback = [](int error, const char* message) {
-        Serial.printf("Error callback - Code: %d, Message: %s\n", error, message);
+    auto errorCallback = [](HttpClientError error, const char* message) {
+        Serial.printf("Error callback - Code: %d, Message: %s\n", static_cast<int>(error), message);
     };
     
     // Test all HTTP methods compilation (won't execute in CI)
@@ -100,6 +100,8 @@ void testHttpMethodsCompilation() {
 }
 
 void loop() {
+    client.loop();
+
     // Simple heartbeat to show the program is running
     static unsigned long lastHeartbeat = 0;
     unsigned long now = millis();
@@ -118,8 +120,8 @@ void loop() {
                     [](AsyncHttpResponse* response) {
                         Serial.printf("✓ GET request successful - Status: %d\n", response->getStatusCode());
                     },
-                    [](int error, const char* message) {
-                        Serial.printf("✗ GET request failed - Error: %d, Message: %s\n", error, message);
+                    [](HttpClientError error, const char* message) {
+                        Serial.printf("✗ GET request failed - Error: %d, Message: %s\n", static_cast<int>(error), message);
                     }
                 );
                 testExecuted = true;
