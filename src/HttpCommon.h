@@ -3,6 +3,11 @@
 
 #include <Arduino.h>
 
+// Feature flags (can be overridden before including library headers)
+#ifndef ASYNC_HTTP_ENABLE_GZIP_DECODE
+#define ASYNC_HTTP_ENABLE_GZIP_DECODE 0  // 0 = only set Accept-Encoding header (no inflation). 1 = future: enable minimal gzip inflate.
+#endif
+
 struct HttpHeader {
     String name;
     String value;
@@ -19,7 +24,8 @@ enum HttpClientError {
     HTTPS_NOT_SUPPORTED = -5,
     CHUNKED_DECODE_FAILED = -6,
     CONNECT_TIMEOUT = -7,
-    BODY_STREAM_READ_FAILED = -8
+    BODY_STREAM_READ_FAILED = -8,
+    ABORTED = -9
 };
 
 inline const char* httpClientErrorToString(HttpClientError error) {
@@ -40,6 +46,8 @@ inline const char* httpClientErrorToString(HttpClientError error) {
             return "Connect timeout";
         case BODY_STREAM_READ_FAILED:
             return "Body stream read failed";
+        case ABORTED:
+            return "Aborted by user";
         default:
             return "Network error";
     }

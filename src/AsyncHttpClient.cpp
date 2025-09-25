@@ -4,16 +4,16 @@
 #include <algorithm>
 
 AsyncHttpClient::AsyncHttpClient()
-    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.1"), _bodyChunkCallback(nullptr) {}
+    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.2"), _bodyChunkCallback(nullptr) {}
 
 AsyncHttpClient::~AsyncHttpClient() {}
 
-void AsyncHttpClient::get(const char* url, SuccessCallback onSuccess, ErrorCallback onError) { makeRequest(HTTP_GET, url, nullptr, onSuccess, onError); }
-void AsyncHttpClient::post(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError) { makeRequest(HTTP_POST, url, data, onSuccess, onError); }
-void AsyncHttpClient::put(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError) { makeRequest(HTTP_PUT, url, data, onSuccess, onError); }
-void AsyncHttpClient::del(const char* url, SuccessCallback onSuccess, ErrorCallback onError) { makeRequest(HTTP_DELETE, url, nullptr, onSuccess, onError); }
-void AsyncHttpClient::head(const char* url, SuccessCallback onSuccess, ErrorCallback onError) { makeRequest(HTTP_HEAD, url, nullptr, onSuccess, onError); }
-void AsyncHttpClient::patch(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError) { makeRequest(HTTP_PATCH, url, data, onSuccess, onError); }
+uint32_t AsyncHttpClient::get(const char* url, SuccessCallback onSuccess, ErrorCallback onError) { return makeRequest(HTTP_GET, url, nullptr, onSuccess, onError); }
+uint32_t AsyncHttpClient::post(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError) { return makeRequest(HTTP_POST, url, data, onSuccess, onError); }
+uint32_t AsyncHttpClient::put(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError) { return makeRequest(HTTP_PUT, url, data, onSuccess, onError); }
+uint32_t AsyncHttpClient::del(const char* url, SuccessCallback onSuccess, ErrorCallback onError) { return makeRequest(HTTP_DELETE, url, nullptr, onSuccess, onError); }
+uint32_t AsyncHttpClient::head(const char* url, SuccessCallback onSuccess, ErrorCallback onError) { return makeRequest(HTTP_HEAD, url, nullptr, onSuccess, onError); }
+uint32_t AsyncHttpClient::patch(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError) { return makeRequest(HTTP_PATCH, url, data, onSuccess, onError); }
 
 void AsyncHttpClient::setHeader(const char* name, const char* value) {
     String nameStr(name), valueStr(value);
@@ -26,7 +26,7 @@ void AsyncHttpClient::setHeader(const char* name, const char* value) {
 void AsyncHttpClient::setTimeout(uint32_t timeout) { _defaultTimeout = timeout; }
 void AsyncHttpClient::setUserAgent(const char* userAgent) { _defaultUserAgent = String(userAgent); }
 
-void AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data,
+uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data,
                                   SuccessCallback onSuccess, ErrorCallback onError) {
     AsyncHttpRequest* request = new AsyncHttpRequest(method, String(url));
     for (const auto &h : _defaultHeaders) request->setHeader(h.name, h.value);
@@ -37,10 +37,10 @@ void AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char
         request->setHeader("Content-Type", "application/x-www-form-urlencoded");
     }
     request->finalizeQueryParams(); // ensure built queries closed
-    this->request(request, onSuccess, onError);
+    return this->request(request, onSuccess, onError);
 }
 
-void AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError) {
+uint32_t AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError) {
     RequestContext* ctx = new RequestContext();
     ctx->request = request;
     ctx->response = new AsyncHttpResponse();
@@ -48,20 +48,28 @@ void AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onSucce
     ctx->onError = onError;
     ctx->id = _nextRequestId++;
     ctx->connectTimeoutMs = _defaultConnectTimeout;
+    // attach per-request response chunk callback if present
+    // per-request chunk callback removed
     if (request->isSecure()) { // not supported yet
         triggerError(ctx, HTTPS_NOT_SUPPORTED, "HTTPS not implemented");
-        return;
+        return ctx->id;
     }
     executeOrQueue(ctx);
+    return ctx->id;
 }
 
+// Removed per-request chunk overload
+
 bool AsyncHttpClient::abort(uint32_t requestId) {
-    for (auto *ctx : _activeRequests) {
-        if (ctx->id == requestId && !ctx->responseProcessed) { triggerError(ctx, CONNECTION_CLOSED, "Aborted by user"); return true; }
+    // Active requests: we must be careful as triggerError() will cleanup and erase from _activeRequests
+    for (size_t i = 0; i < _activeRequests.size(); ++i) {
+        RequestContext* ctx = _activeRequests[i];
+        if (ctx->id == requestId && !ctx->responseProcessed) { triggerError(ctx, ABORTED, "Aborted by user"); return true; }
     }
+    // Pending queue: still not executed
     for (auto it = _pendingQueue.begin(); it != _pendingQueue.end(); ++it) {
         if ((*it)->id == requestId) {
-            RequestContext* ctx = *it; _pendingQueue.erase(it); triggerError(ctx, CONNECTION_CLOSED, "Aborted by user"); return true;
+            RequestContext* ctx = *it; _pendingQueue.erase(it); triggerError(ctx, ABORTED, "Aborted by user"); return true;
         }
     }
     return false;
@@ -122,9 +130,10 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                     if (context->chunked) {
                         context->responseBuffer = bodyData;
                     } else {
-                        context->response->appendBody(bodyData.c_str(), bodyData.length());
+                        if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+                            context->response->appendBody(bodyData.c_str(), bodyData.length());
+                        }
                         context->receivedContentLength += bodyData.length();
-                        if (context->perRequestChunkCb) context->perRequestChunkCb(bodyData.c_str(), bodyData.length(), false);
                         if (_bodyChunkCallback) _bodyChunkCallback(bodyData.c_str(), bodyData.length(), false);
                         context->responseBuffer = "";
                     }
@@ -132,9 +141,10 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             } else { triggerError(context, HEADER_PARSE_FAILED, "Failed to parse response headers"); return; }
         }
     } else if (!context->chunked) {
-        context->response->appendBody(data, len);
+    if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+            context->response->appendBody(data, len);
+        }
         context->receivedContentLength += len;
-        if (context->perRequestChunkCb) context->perRequestChunkCb(data, len, false);
         if (_bodyChunkCallback) _bodyChunkCallback(data, len, false);
     }
 
@@ -143,17 +153,18 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             int lineEnd = context->responseBuffer.indexOf("\r\n");
             if (lineEnd == -1) break;
             String sizeLine = context->responseBuffer.substring(0, lineEnd); sizeLine.trim();
-            char *endptr = nullptr; uint32_t chunkSize = strtoul(sizeLine.c_str(), &endptr, 16);
-            if (endptr == nullptr) { triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size parse error"); return; }
+            uint32_t chunkSize = 0;
+            if (!parseChunkSizeLine(sizeLine, &chunkSize)) { triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size parse error"); return; }
             context->currentChunkRemaining = chunkSize;
             context->responseBuffer.remove(0, lineEnd + 2);
             if (chunkSize == 0) { context->chunkedComplete = true; int crlf = context->responseBuffer.indexOf("\r\n"); if (crlf != -1) context->responseBuffer.remove(0, crlf + 2); break; }
         }
         if ((int)context->responseBuffer.length() < (int)(context->currentChunkRemaining + 2)) break;
         String chunkData = context->responseBuffer.substring(0, context->currentChunkRemaining);
-        context->response->appendBody(chunkData.c_str(), chunkData.length());
+    if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+            context->response->appendBody(chunkData.c_str(), chunkData.length());
+        }
         context->receivedContentLength += chunkData.length();
-        if (context->perRequestChunkCb) context->perRequestChunkCb(chunkData.c_str(), chunkData.length(), false);
         if (_bodyChunkCallback) _bodyChunkCallback(chunkData.c_str(), chunkData.length(), false);
         context->responseBuffer.remove(0, context->currentChunkRemaining + 2);
         context->currentChunkRemaining = 0;
@@ -164,17 +175,47 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
         if (context->chunked && context->chunkedComplete) complete = true;
         else if (!context->chunked && context->expectedContentLength > 0 && context->receivedContentLength >= context->expectedContentLength) complete = true;
         if (complete) {
-            if (context->perRequestChunkCb) context->perRequestChunkCb(nullptr, 0, true);
             if (_bodyChunkCallback) _bodyChunkCallback(nullptr, 0, true);
             processResponse(context);
         }
     }
 }
 
+bool AsyncHttpClient::parseChunkSizeLine(const String& line, uint32_t* outSize) {
+    if (!outSize) return false;
+    if (line.length() == 0) return false;
+    // Spec allows chunk extensions after size separated by ';'. We ignore extensions for now.
+    int semi = line.indexOf(';');
+    String sizePart = semi == -1 ? line : line.substring(0, semi);
+    sizePart.trim();
+    const char* cstr = sizePart.c_str();
+    char* endptr = nullptr;
+    unsigned long val = strtoul(cstr, &endptr, 16);
+    if (endptr == nullptr || endptr == cstr) return false; // no conversion
+    // Allow optional chunk extensions (ignored). Ensure remaining chars (before ';') consumed.
+    if (*endptr != '\0') return false; // unexpected trailing chars before extension separator
+    *outSize = (uint32_t)val;
+    return true;
+}
+
 void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* client) {
     if (context->responseProcessed) return;
-    if (context->headersComplete) processResponse(context);
-    else triggerError(context, CONNECTION_CLOSED, "Connection closed before headers received");
+    if (!context->headersComplete) { triggerError(context, CONNECTION_CLOSED, "Connection closed before headers received"); return; }
+    // Headers parsed: determine if body complete.
+    bool complete = false;
+    if (context->chunked) {
+        complete = context->chunkedComplete; // final zero-size chunk seen
+    } else if (context->expectedContentLength > 0) {
+        complete = (context->receivedContentLength >= context->expectedContentLength);
+    } else {
+        // No Content-Length: closure defines completion
+        complete = true;
+    }
+    if (!complete) {
+        triggerError(context, CONNECTION_CLOSED, "Connection closed mid-body");
+        return;
+    }
+    processResponse(context);
 }
 
 void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, int8_t error) {
@@ -215,12 +256,19 @@ void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError erro
 
 void AsyncHttpClient::loop() {
     uint32_t now = millis();
-    for (auto *ctx : _activeRequests) {
+    // Iterate safely even if callbacks remove entries: use index loop.
+    for (size_t i = 0; i < _activeRequests.size(); ) {
+        RequestContext* ctx = _activeRequests[i];
 #if !ASYNC_TCP_HAS_TIMEOUT
-        if (!ctx->responseProcessed && (now - ctx->timeoutTimer) >= ctx->request->getTimeout()) triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
+        if (!ctx->responseProcessed && (now - ctx->timeoutTimer) >= ctx->request->getTimeout()) { triggerError(ctx, REQUEST_TIMEOUT, "Request timeout"); }
 #endif
-        if (!ctx->responseProcessed && ctx->client && !ctx->headersSent && ctx->connectTimeoutMs > 0 && (now - ctx->connectStartMs) > ctx->connectTimeoutMs) triggerError(ctx, CONNECT_TIMEOUT, "Connect timeout");
+        if (!ctx->responseProcessed && ctx->client && !ctx->headersSent && ctx->connectTimeoutMs > 0 && (now - ctx->connectStartMs) > ctx->connectTimeoutMs) { triggerError(ctx, CONNECT_TIMEOUT, "Connect timeout"); }
         if (!ctx->responseProcessed && ctx->streamingBodyInProgress && ctx->request->hasBodyStream()) sendStreamData(ctx);
+        // If triggerError/processResponse cleaned up ctx, current index now holds a different pointer.
+        if (i < _activeRequests.size() && _activeRequests[i] == ctx) {
+            ++i; // still present, advance
+        }
+        // else do not advance: current i now refers to next element after erase
     }
 }
 

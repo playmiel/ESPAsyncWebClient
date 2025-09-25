@@ -12,7 +12,7 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 ## Features
 
 - ✅ **Asynchronous HTTP requests** - Non-blocking HTTP operations
-- ✅ **Multiple HTTP methods** - GET, POST, PUT, DELETE support
+- ✅ **Multiple HTTP methods** - GET, POST, PUT, DELETE, HEAD, PATCH support
 - ✅ **Custom headers** - Set global and per-request headers
 - ✅ **Callback-based responses** - Success and error callbacks
 - ✅ **ESP32 only** – (ESP8266 support removed since 1.0.1)
@@ -100,10 +100,19 @@ void post(const char* url, const char* data, SuccessCallback onSuccess, ErrorCal
 void put(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
 // DELETE request
-void del(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+uint32_t del(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
-// Advanced request (custom method, headers, etc.)
-void request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+// HEAD request
+uint32_t head(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+
+// PATCH request (with data)
+uint32_t patch(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+
+// Advanced request (custom method, headers, streaming, etc.)
+uint32_t request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+
+// Abort a request by its ID
+bool abort(uint32_t requestId);
 ```
 
 #### Configuration Methods
@@ -112,8 +121,14 @@ void request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback
 // Set global default header
 void setHeader(const char* name, const char* value);
 
-// Set request timeout (milliseconds)
+// Set total request timeout (milliseconds)
 void setTimeout(uint32_t timeout);
+
+// Set connect phase timeout distinct from total timeout
+void setDefaultConnectTimeout(uint32_t ms);
+
+// Limit simultaneous active requests (0 = unlimited, others queued)
+void setMaxParallel(uint16_t maxParallel);
 
 // Set User-Agent string
 void setUserAgent(const char* userAgent);
@@ -221,13 +236,18 @@ client.request(request, onSuccess);
 
 Error codes passed to error callbacks:
 
-- `CONNECTION_FAILED (-1)`: Failed to initiate connection
-- `HEADER_PARSE_FAILED (-2)`: Failed to parse response headers
-- `CONNECTION_CLOSED (-3)`: Connection closed before headers received
-- `REQUEST_TIMEOUT (-4)`: Request timeout
-- `HTTPS_NOT_SUPPORTED (-5)`: HTTPS not implemented yet
-- `CHUNKED_DECODE_FAILED (-6)`: Failed to decode chunked body
-- `>0`: AsyncTCP error codes
+| Code | Enum | Meaning |
+|------|------|---------|
+| -1 | CONNECTION_FAILED | Failed to initiate TCP connection |
+| -2 | HEADER_PARSE_FAILED | Malformed HTTP response headers |
+| -3 | CONNECTION_CLOSED | Connection closed before headers OR mid-body (see message) |
+| -4 | REQUEST_TIMEOUT | Overall request timeout elapsed |
+| -5 | HTTPS_NOT_SUPPORTED | HTTPS/TLS not implemented yet |
+| -6 | CHUNKED_DECODE_FAILED | Failed to decode chunked transfer body |
+| -7 | CONNECT_TIMEOUT | Connect phase exceeded connect timeout |
+| -8 | BODY_STREAM_READ_FAILED | Streaming request body provider failed |
+| -9 | ABORTED | Request cancelled via abort(id) |
+| >0 | (AsyncTCP) | Underlying AsyncTCP positive error codes |
 
 ```cpp
 client.get("http://example.com", onSuccess,
@@ -317,7 +337,7 @@ Limitations:
 - No advanced validation (extensions, checksums)
 - On parse failure you get `CHUNKED_DECODE_FAILED`
 
-### HTTPS
+### HTTPS (non supporté)
 
 `https://` URLs return `HTTPS_NOT_SUPPORTED`. To add TLS later, wrap or replace `AsyncClient` with a secure implementation.
 
@@ -361,18 +381,22 @@ Limitations:
 
 Pour fournir un corps très volumineux ou un streaming, il faudra insérer un hook dans `handleData` après `headersComplete` avant `appendBody`.
 
-## Codes d'erreur
+## Codes d'erreur (mis à jour)
 
-Erreurs négatives définies (enum `HttpClientError`):
+| Code | Nom | Signification (FR) |
+|------|-----|--------------------|
+| -1 | CONNECTION_FAILED | Échec connexion TCP |
+| -2 | HEADER_PARSE_FAILED | En-têtes HTTP invalides |
+| -3 | CONNECTION_CLOSED | Connexion fermée avant headers ou corps tronqué |
+| -4 | REQUEST_TIMEOUT | Timeout total dépassé |
+| -5 | HTTPS_NOT_SUPPORTED | HTTPS non supporté |
+| -6 | CHUNKED_DECODE_FAILED | Erreur décodage chunked |
+| -7 | CONNECT_TIMEOUT | Timeout spécifique de connexion |
+| -8 | BODY_STREAM_READ_FAILED | Lecture corps stream échouée |
+| -9 | ABORTED | Annulé par l'utilisateur |
+| >0 | (AsyncTCP) | Code d'erreur bas niveau AsyncTCP |
 
-| Code | Nom                  | Signification |
-|------|----------------------|---------------|
-| -1   | `CONNECTION_FAILED`  | Échec d'initiation de la connexion TCP |
-| -2   | `HEADER_PARSE_FAILED`| Format de réponse invalide avant fin d'en-têtes |
-| -3   | `CONNECTION_CLOSED`  | Connexion fermée avant réception headers complets |
-| -4   | `REQUEST_TIMEOUT`    | Délai dépassé (timeout natif ou boucle manuelle) |
-
-Codes positifs : valeurs directes retournées par AsyncTCP (erreurs réseau bas niveau) transmises inchangées; utiliser le code numérique et un logging réseau approprié.
+Codes positifs (>0) : valeurs directes retournées par AsyncTCP; utiliser le code numérique et un logging réseau adapté.
 
 Exemple de mapping dans un callback :
 
@@ -442,6 +466,62 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Optional Accept-Encoding: gzip (no automatic decompression yet)
 - Separate connect timeout and total timeout
 - Optional request queue limiting parallel connections (setMaxParallel)
+- Request ID return (all helper methods now return a uint32_t identifier)
+- No-store body mode: `req->setNoStoreBody(true)` to avoid buffering body when a chunk callback is used
+
+### Gzip / Compression
+
+Current: only the `Accept-Encoding: gzip` header can be added via `enableGzipAcceptEncoding(true)`.
+The library DOES NOT yet decompress gzip payloads. If you don't want compressed responses, simply don't enable the header.
+A future optional flag (`ASYNC_HTTP_ENABLE_GZIP_DECODE`) may add a tiny inflater (miniz/zlib) after flash/RAM impact is evaluated.
+
+### HTTPS (Not Supported Yet)
+
+HTTPS is not implemented. Any `https://` URL returns `HTTPS_NOT_SUPPORTED`. A future drop-in TLS client (replacing `AsyncClient`) is planned without breaking the public API.
+
+<!-- Per-request chunk callback retiré pour réduire la surface API; utiliser uniquement client.onBodyChunk -->
+
+### API Change: Request ID Return (Breaking)
+
+All convenience request methods (get/post/put/delete/head/patch/request) now return a `uint32_t` request ID.
+
+Pros:
+
+- Enables precise cancellation with `abort(id)`.
+- Easier correlation of logs/metrics to in-flight requests.
+- Foundation for retry/backoff orchestration or tracing layers.
+- Allows future per-request state lookups (timings) without storing pointers.
+
+Cons / Migration impact:
+
+- Existing sketches expecting `void` will fail to compile (signature mismatch).
+- Wrapper libraries must update their own forwarders.
+- Users ignoring the value may see an unused result warning (can cast to `(void)` if desired).
+
+Potential compatibility shim (not included by default):
+
+```cpp
+#ifdef ASYNC_HTTP_LEGACY_VOID_API
+inline void get_legacy(AsyncHttpClient& c, const char* url,
+        AsyncHttpClient::SuccessCallback ok,
+        AsyncHttpClient::ErrorCallback err = nullptr) {
+    (void)c.get(url, ok, err);
+}
+#endif
+```
+
+Request if you would like these legacy inline adapters added to the library.
+
+If you define `ASYNC_HTTP_LEGACY_VOID_API` (e.g. via build flags), the class exposes helper wrappers like `get_legacy()`, `post_legacy()`, etc., that reproduce the old `void` signatures while discarding the new request ID.
+
+### Advanced Example
+
+See `examples/StreamingUpload/StreamingUpload.ino` for a streaming (no-copy) upload demonstrating:
+
+- `setBodyStream()`
+- Basic Auth (`setBasicAuth`)
+- Query params builder (`addQueryParam` / `finalizeQueryParams`)
+- Connection limiting (`setMaxParallel`)
 
 - Create an issue on GitHub for bug reports or feature requests
 - Check the examples directory for usage patterns

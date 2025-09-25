@@ -10,7 +10,7 @@ AsyncHttpRequest::AsyncHttpRequest(HttpMethod method, const String& url)
     
     // Set default headers
     setHeader("Connection", "close");
-    setHeader("User-Agent", "ESPAsyncWebClient/1.0.1");
+    setHeader("User-Agent", "ESPAsyncWebClient/1.0.2");
 }
 
 AsyncHttpRequest::~AsyncHttpRequest() {

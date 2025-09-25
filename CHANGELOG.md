@@ -81,17 +81,38 @@ Changes since 1.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- (placeholder)
+
+### Removed
+
+- Per-request body chunk callback API (unstable / deferred). Global `onBodyChunk` remains.
+
+## [1.0.2] - 2025-09-25
+
 ### Added
 
-- Basic chunked transfer decoding (no trailers support)
-- HTTPS_NOT_SUPPORTED (-5) and CHUNKED_DECODE_FAILED (-6) error codes
+- HEAD & PATCH helper methods
+- Separate connect timeout (`setDefaultConnectTimeout`) distinct from total timeout
+- Request queue limiting via `setMaxParallel()`
+- Abort support returning `ABORTED (-9)` error code
+- Extended error codes: `CONNECT_TIMEOUT (-7)`, `BODY_STREAM_READ_FAILED (-8)`, `ABORTED (-9)`
 
-### Documented
+### Changed
 
-- Lifetime of `AsyncHttpResponse*` pointer restricted to success callback
-- Limitations: HTTPS unimplemented, chunked minimal, full in-memory buffering
+- `loop()` iteration made safe against vector mutation during callbacks (index-based)
+- Improved chunked decoding: strict `endptr` validation for chunk size
+- `handleDisconnect` now detects truncated bodies (Content-Length short or chunked incomplete)
+- README updated: new methods, error table, documented abort & streaming
+
+### Fixed
+
+- Potential invalid iteration when triggering cleanup inside timeout / error paths
+- Chunk size parsing failure cases now yield `CHUNKED_DECODE_FAILED`
 
 ### Internal
 
-- Track all RequestContext objects (even with native timeout) for potential future abort()
+- Unified abort semantics (distinct `ABORTED` code instead of reusing `CONNECTION_CLOSED`)
+- Clear separation of connect vs total timeout logic
 

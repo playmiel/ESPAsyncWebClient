@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <vector>
+#include <functional>
 #include "HttpCommon.h"
 
 enum HttpMethod {
@@ -66,6 +67,12 @@ public:
     // Accept-Encoding convenience (gzip)
     void enableGzipAcceptEncoding(bool enable=true);
 
+    // Avoid storing body in memory (use only streaming callbacks). Effective only if a response chunk callback (per-request ou global) est présent.
+    void setNoStoreBody(bool enable=true) { _noStoreBody = enable; }
+    bool getNoStoreBody() const { return _noStoreBody; }
+
+    // (Per-request response chunk callback removed – use global client.onBodyChunk)
+
 private:
     HttpMethod _method;
     String _url;
@@ -81,6 +88,7 @@ private:
     static String _emptyString;
     bool _queryFinalized = true;
     bool _acceptGzip = false;
+    bool _noStoreBody = false;
     
     String methodToString() const;
 };
