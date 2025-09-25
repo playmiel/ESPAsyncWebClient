@@ -35,6 +35,12 @@ public:
     // Body management
     void setBody(const String& body) { _body = body; }
     const String& getBody() const { return _body; }
+    bool hasBody() const { return !_body.isEmpty() || _bodyProvider != nullptr; }
+    typedef std::function<int(uint8_t* buffer, size_t maxLen, bool *final)> BodyStreamProvider; // returns bytes written or -1
+    void setBodyStream(size_t totalLength, BodyStreamProvider provider) { _streamLength = totalLength; _bodyProvider = provider; }
+    bool hasBodyStream() const { return _bodyProvider != nullptr; }
+    size_t getStreamLength() const { return _streamLength; }
+    BodyStreamProvider getBodyProvider() const { return _bodyProvider; }
     
     // Timeout
     void setTimeout(uint32_t timeout) { _timeout = timeout; }
@@ -45,9 +51,20 @@ public:
     
     // Build HTTP request string
     String buildHttpRequest() const;
+    String buildHeadersOnly() const; // when streaming body
     
     // URL parsing
     bool parseUrl(const String& url);
+
+    // Query parameter builder (when starting from base URL). Call before sending.
+    void addQueryParam(const String& key, const String& value);
+    void finalizeQueryParams();
+
+    // Basic auth helper
+    void setBasicAuth(const String& user, const String& pass);
+
+    // Accept-Encoding convenience (gzip)
+    void enableGzipAcceptEncoding(bool enable=true);
 
 private:
     HttpMethod _method;
@@ -58,8 +75,12 @@ private:
     bool _secure;
     std::vector<HttpHeader> _headers;
     String _body;
+    size_t _streamLength = 0;
+    BodyStreamProvider _bodyProvider = nullptr;
     uint32_t _timeout;
     static String _emptyString;
+    bool _queryFinalized = true;
+    bool _acceptGzip = false;
     
     String methodToString() const;
 };

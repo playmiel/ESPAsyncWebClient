@@ -7,7 +7,7 @@
 
 An asynchronous HTTP client library for ESP32 microcontrollers, built on top of AsyncTCP. This library provides a simple and efficient way to make HTTP requests without blocking your main program execution.
 
-> ⚠️ **Avertissement HTTPS**: La connexion TLS/HTTPS réelle n'est pas encore implémentée. Les URLs `https://` sont simplement reconnues pour parser le port (443) et le flag `secure`, mais aucune négociation TLS n'est effectuée. N'utilisez pas cette bibliothèque pour transmettre des données sensibles tant que le support TLS n'est pas ajouté.
+> ⚠️ **HTTPS Warning**: Real TLS/HTTPS is NOT implemented yet. `https://` URLs are rejected with `HTTPS_NOT_SUPPORTED`. Do not use this library for sensitive data until TLS support is added.
 
 ## Features
 
@@ -15,13 +15,13 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Multiple HTTP methods** - GET, POST, PUT, DELETE support
 - ✅ **Custom headers** - Set global and per-request headers
 - ✅ **Callback-based responses** - Success and error callbacks
-- ✅ **ESP32 only** – (ESP8266 retiré depuis 1.0.1)
+- ✅ **ESP32 only** – (ESP8266 support removed since 1.0.1)
 - ✅ **Simple API** - Easy to use with minimal setup
 - ✅ **Configurable timeouts** - Set custom timeout values
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
 - ⚠️ **Basic chunked transfer decoding** - Simple implementation (no trailers)
 
-> ⚠ Limitations: HTTPS n'est pas encore implémenté (les URLs https:// retournent une erreur), la gestion chunked est volontairement minimale (pas de trailers ni décompression), et de très grandes réponses sont entièrement mises en mémoire (pas de streaming progressif pour l'instant).
+> ⚠ Limitations: HTTPS not implemented; chunked decoding is minimal (no trailers); full body is buffered in memory (no zero-copy streaming yet).
 
 ## Installation
 
@@ -278,40 +278,48 @@ request->setBody(xmlData);
 - Response objects are automatically cleaned up after callbacks complete
 - No manual memory management required for typical usage
 
-> IMPORTANT: Le pointeur `AsyncHttpResponse*` passé au callback succès n'est valide QUE pendant l'exécution du callback. Ne le stockez pas, ne gardez pas de références vers le `String` du body ou les headers après retour. Copiez les données si nécessaire.
+> IMPORTANT: The `AsyncHttpResponse*` pointer passed to the success callback is ONLY valid during that callback. Do not store it or references to its internal `String` objects. Copy what you need.
 
-### Streaming du corps (expérimental)
+### Body Streaming (experimental)
 
-Vous pouvez enregistrer un callback global via `client.onBodyChunk([](const char* data, size_t len, bool final){ ... });`.
+Register a global streaming callback via:
 
-Paramètres:
+```cpp
+client.onBodyChunk([](const char* data, size_t len, bool final) {
+    // data may be nullptr & len==0 when final==true and no trailing bytes
+});
+```
 
-- `data`, `len`: segment reçu (si `final==true` et aucune donnée supplémentaire, `data` peut être `nullptr` et `len==0`)
-- `final`: true lorsque la réponse est totalement reçue
+Parameters:
+
+- `data`, `len`: received segment (for chunked: decoded chunk payload; for non-chunked: raw slice). When `final==true` and no extra bytes, `data` can be `nullptr`.
+- `final`: true when the whole response body is complete.
 
 Notes:
 
-- Appelé pour chaque segment (chunk HTTP ou portion brute non-chunked)
-- Le corps complet est toujours assemblé dans `AsyncHttpResponse` (optimisation future possible pour éviter double stockage)
-- Le callback `final` est invoqué juste avant le callback succès
-- Ne faites pas d'opérations bloquantes dans ce callback
+- Invoked for every segment (chunk or contiguous data block)
+- The full body is still accumulated internally (future option may allow disabling accumulation)
+- `final` is invoked just before the success callback
+- Keep it lightweight (avoid blocking operations)
 
 
-### Content-Length et corps tronqués / excédentaires
+### Content-Length and over / under delivery
 
-Si l'en-tête `Content-Length` est présent, la réponse est considérée complète dès que ce nombre d'octets est reçu. Des octets supplémentaires éventuellement envoyés par un serveur mal configuré seront ignorés. Si le serveur ferme la connexion sans `Content-Length`, le corps reçu jusqu'à la fermeture est retourné.
+If `Content-Length` is present, the response is considered complete once that many bytes have been received. Extra bytes (if a misbehaving server sends more) are ignored. Without `Content-Length`, completion is determined by connection close.
 
 ### Transfer-Encoding: chunked
 
-Une implémentation simple du décodage chunked est fournie. Limitations:
+Minimal chunked decoding is implemented.
 
-- Pas de prise en charge des trailers (ils sont ignorés)
-- Pas de validation avancée (CRC, extensions de chunk, etc.)
-- En cas d'erreur de décodage : erreur `CHUNKED_DECODE_FAILED`
+Limitations:
+
+- No trailer support (ignored if present)
+- No advanced validation (extensions, checksums)
+- On parse failure you get `CHUNKED_DECODE_FAILED`
 
 ### HTTPS
 
-Les URLs `https://` retournent actuellement l'erreur `HTTPS_NOT_SUPPORTED`. Pour ajouter TLS, il faudra remplacer ou encapsuler `AsyncClient` par une variante sécurisée.
+`https://` URLs return `HTTPS_NOT_SUPPORTED`. To add TLS later, wrap or replace `AsyncClient` with a secure implementation.
 
 ## Thread Safety
 
@@ -326,18 +334,17 @@ Les URLs `https://` retournent actuellement l'erreur `HTTPS_NOT_SUPPORTED`. Pour
 
 > **Note**: ESP8266 was mentioned in early docs but is no longer supported as of 1.0.1. The code exclusively targets AsyncTCP (ESP32).
 
-## Plateformes supportées
+## Supported Platforms
 
-- Cible actuelle : **ESP32** (plateforme PlatformIO `espressif32`).
-- ESP8266 : retiré (absence d'inclusion conditionnelle `ESPAsyncTCP.h`, pas de code de compatibilité, tests uniquement ESP32).
-- Si une réintégration multi‑plateforme est souhaitée plus tard : introduire des `#ifdef` sur core architecture + adapter l'abstraction client.
+- Current target: **ESP32** only
+- ESP8266: removed (no conditional code path retained)
 
-## Limitations actuelles
+## Current Limitations (summary)
 
-- Pas de **TLS/HTTPS** (voir avertissement en tête). Champ `_secure` uniquement informatif.
-- Pas de **décodage chunked** (`Transfer-Encoding: chunked` ignoré : le corps sera concaténé brut jusqu'à fermeture ou `Content-Length`).
-- Pas de **streaming incrémental** utilisateur : tout le corps est accumulé en mémoire (`String`). Risque de fragmentation / OOM pour grosses réponses.
-- Pas de **redirections automatiques** (3xx non suivis, à gérer manuellement si besoin).
+- No TLS (HTTPS rejected)
+- Chunked: minimal (no trailers)
+- Full in-memory buffering (even with streaming hook)
+- No automatic redirects (3xx not followed)
 - Pas de **keep-alive prolongé** : en-tête par défaut `Connection: close`; aucune réutilisation de connexion.
 - Timeout manuel requis si la version AsyncTCP utilisée ne fournit pas `setTimeout` (mettre `client.loop()` dans `loop()`).
 - Aucune gestion spécifique des encodages de contenu (gzip/deflate ignorés si envoyés).
@@ -420,11 +427,21 @@ pio run -e compile_test
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+- Added: HEAD, PATCH
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## Support
+
+- Streaming request body (no-copy) via setBodyStream
+- Global and per-request body chunk callbacks
+- Basic Auth helper (request->setBasicAuth)
+- Query param builder (addQueryParam/finalizeQueryParams)
+- Optional Accept-Encoding: gzip (no automatic decompression yet)
+- Separate connect timeout and total timeout
+- Optional request queue limiting parallel connections (setMaxParallel)
 
 - Create an issue on GitHub for bug reports or feature requests
 - Check the examples directory for usage patterns
