@@ -189,9 +189,9 @@ jobs:
           path: |
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
-      - name: Run unit tests (parseUrl C++)
+      - name: Run native unit tests (UrlParser)
         run: |
-          pio test -e esp32dev -v
+          pio test -e native -v
 
   python-parse-tests:
     runs-on: ubuntu-latest

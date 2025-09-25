@@ -1,4 +1,5 @@
 #include "HttpRequest.h"
+#include "UrlParser.h"
 
 String AsyncHttpRequest::_emptyString = "";
 
@@ -78,54 +79,16 @@ String AsyncHttpRequest::buildHeadersOnly() const {
 }
 
 bool AsyncHttpRequest::parseUrl(const String& url) {
-    String urlCopy = url;
-    
-    // Check for protocol
-    if (urlCopy.startsWith("https://")) {
-        _secure = true;
-        _port = 443;
-        urlCopy = urlCopy.substring(8);
-    } else if (urlCopy.startsWith("http://")) {
-        _secure = false;
-        _port = 80;
-        urlCopy = urlCopy.substring(7);
-    } else {
-        // Default to http
-        _secure = false;
-        _port = 80;
+    UrlParser::ParsedUrl parsed;
+    if (!UrlParser::parse(std::string(url.c_str()), parsed)) {
+        return false;
     }
-    
-    // Find path and query separators
-    int pathIndex = urlCopy.indexOf('/');
-    int queryIndex = urlCopy.indexOf('?');
-
-    // If there is no explicit path, handle URLs like "example.com?foo=bar"
-    if (pathIndex == -1) {
-        if (queryIndex == -1) {
-            _host = urlCopy;
-            _path = "/";
-        } else {
-            _host = urlCopy.substring(0, queryIndex);
-            _path = String('/') + urlCopy.substring(queryIndex);
-        }
-    } else if (queryIndex != -1 && queryIndex < pathIndex) {
-        // Query appears before path separator
-        _host = urlCopy.substring(0, queryIndex);
-        _path = String('/') + urlCopy.substring(queryIndex);
-    } else {
-        _host = urlCopy.substring(0, pathIndex);
-        _path = urlCopy.substring(pathIndex);
-    }
-    
-    // Check for port in hostname
-    int portIndex = _host.indexOf(':');
-    if (portIndex != -1) {
-        _port = _host.substring(portIndex + 1).toInt();
-        _host = _host.substring(0, portIndex);
-    }
-    
+    _secure = parsed.secure;
+    _port = parsed.port;
+    _host = parsed.host.c_str();
+    _path = parsed.path.c_str();
     _queryFinalized = true; // parsed URL already has path/query
-    return !_host.isEmpty();
+    return true;
 }
 
 String AsyncHttpRequest::methodToString() const {
