@@ -53,25 +53,33 @@ jobs:
             cd -
           fi
         done
+    - name: Verify release metadata & consistency
+      run: |
+        bash scripts/verify-release.sh
+
+    - name: Create source archive
+      run: |
+        VERSION=$(grep '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+        ARCHIVE="ESPAsyncWebClient-${VERSION}.zip"
+        zip -r "$ARCHIVE" src examples README.md CHANGELOG.md LICENSE library.json library.properties
+        echo "Created $ARCHIVE"
+        echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: source-archive
+        path: ${{ env.ARCHIVE }}
     
     - name: Create Release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
-        draft: false
-        prerelease: false
+        files: ${{ env.ARCHIVE }}
+        name: Release ${{ github.ref }}
         body: |
           ## Changes in this release
-          - All examples successfully build for ESP32
-          - Library structure validated
-          - Dependencies verified
+          See CHANGELOG.md entry for ${{ github.ref }}
           
-          ## Platforms tested
-          - ESP32 (espressif32)
-          
-          ## Dependencies
-          - AsyncTCP
-          - ArduinoJson (^6.21.0)
+          ## Verification
+          - Examples built successfully
+          - Version metadata consistent
+          - Source archive attached

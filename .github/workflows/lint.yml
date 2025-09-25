@@ -1,0 +1,55 @@
+name: Lint & Static Analysis
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+jobs:
+  clang-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Check formatting
+        run: |
+          files=$(git ls-files '*.h' '*.cpp' '*.ino')
+          echo "Checking clang-format on: $files"
+          diff_found=0
+          for f in $files; do
+            clang-format -style=file $f | diff -u $f - || diff_found=1
+          done
+          if [ $diff_found -ne 0 ]; then
+            echo "Formatting issues detected. Run clang-format." >&2
+            exit 1
+          fi
+  cpplint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cpplint
+        run: pip install cpplint
+      - name: Run cpplint
+        run: |
+          cpplint --recursive --extensions=h,cpp src || true
+          # We don't fail hard yet; adjust policy later
+  cppcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=warning,style,performance --inline-suppr \
+            --suppress=missingIncludeSystem \
+            -I src --quiet src || true
+  version-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run version sync check
+        run: |
+          bash scripts/verify-release.sh || (echo "Version sync failed" && exit 1)

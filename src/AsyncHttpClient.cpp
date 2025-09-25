@@ -2,7 +2,7 @@
 #include <algorithm>
 
 AsyncHttpClient::AsyncHttpClient() 
-    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.0") {
+    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.1"), _bodyChunkCallback(nullptr) {
 }
 
 AsyncHttpClient::~AsyncHttpClient() {
@@ -77,7 +77,22 @@ void AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onSucce
     context->response = new AsyncHttpResponse();
     context->onSuccess = onSuccess;
     context->onError = onError;
+    context->id = _nextRequestId++;
+bool AsyncHttpClient::abort(uint32_t requestId) {
+    for (auto* ctx : _activeRequests) {
+        if (ctx->id == requestId && !ctx->responseProcessed) {
+            triggerError(ctx, CONNECTION_CLOSED, "Aborted by user");
+            return true;
+        }
+    }
+    return false;
+}
     
+    if (request->isSecure()) { // HTTPS not implemented yet
+        triggerError(context, HTTPS_NOT_SUPPORTED, "HTTPS not implemented");
+        return;
+    }
+
     executeRequest(context);
 }
 
@@ -101,6 +116,9 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
         handleError(context, client, error);
     });
 
+    // Always track context for potential future abort/inspection
+    _activeRequests.push_back(context);
+
 #if ASYNC_TCP_HAS_TIMEOUT
     context->client->setTimeout(context->request->getTimeout());
     context->client->onTimeout([this, context](void* arg, AsyncClient* client, uint32_t time) {
@@ -108,7 +126,6 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     });
 #else
     context->timeoutTimer = millis();
-    _activeRequests.push_back(context);
 #endif
 
     // Start connection
@@ -134,26 +151,78 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                 context->headersComplete = true;
                 String bodyData = context->responseBuffer.substring(headerEnd + 4);
                 if (!bodyData.isEmpty()) {
-                    context->response->appendBody(bodyData.c_str(), bodyData.length());
-                    context->receivedContentLength += bodyData.length();
+                    if (context->chunked) {
+                        context->responseBuffer = bodyData; // keep for chunk parser
+                    } else {
+                        context->response->appendBody(bodyData.c_str(), bodyData.length());
+                        context->receivedContentLength += bodyData.length();
+                        if (_bodyChunkCallback) _bodyChunkCallback(bodyData.c_str(), bodyData.length(), false);
+                        context->responseBuffer = "";
+                    }
+                } else {
+                    context->responseBuffer = "";
                 }
-                context->responseBuffer = "";
             } else {
                 triggerError(context, HEADER_PARSE_FAILED, "Failed to parse response headers");
                 return;
             }
         }
-    } else {
-        // We're receiving body data
-        context->response->appendBody(data, len);
-        context->receivedContentLength += len;
+    } else if (!context->chunked) {
+        // Normal body streaming
+    context->response->appendBody(data, len);
+    context->receivedContentLength += len;
+    if (_bodyChunkCallback) _bodyChunkCallback(data, len, false);
     }
     
-    // Check if we've received all expected content
-    if (context->headersComplete && !context->responseProcessed &&
-        context->expectedContentLength > 0 && 
-        context->receivedContentLength >= context->expectedContentLength) {
-        processResponse(context);
+    // Chunked decoding loop
+    while (context->headersComplete && context->chunked && !context->chunkedComplete) {
+        if (context->currentChunkRemaining == 0) {
+            int lineEnd = context->responseBuffer.indexOf("\r\n");
+            if (lineEnd == -1) break; // wait more data
+            String sizeLine = context->responseBuffer.substring(0, lineEnd);
+            sizeLine.trim();
+            char *endptr = nullptr; // strtoul on Arduino returns endptr differently but acceptable
+            uint32_t chunkSize = strtoul(sizeLine.c_str(), &endptr, 16);
+            if (endptr == nullptr) {
+                triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size parse error");
+                return;
+            }
+            context->currentChunkRemaining = chunkSize;
+            context->responseBuffer.remove(0, lineEnd + 2);
+            if (chunkSize == 0) {
+                // final chunk -> mark complete (ignore potential trailers for now)
+                context->chunkedComplete = true;
+                // consume trailing CRLF if present
+                int crlfPos = context->responseBuffer.indexOf("\r\n");
+                if (crlfPos != -1) {
+                    context->responseBuffer.remove(0, crlfPos + 2);
+                }
+                break;
+            }
+        }
+        if ((int)context->responseBuffer.length() < (int)(context->currentChunkRemaining + 2)) {
+            break; // incomplete chunk payload
+        }
+        String chunkData = context->responseBuffer.substring(0, context->currentChunkRemaining);
+    context->response->appendBody(chunkData.c_str(), chunkData.length());
+    context->receivedContentLength += chunkData.length();
+    if (_bodyChunkCallback) _bodyChunkCallback(chunkData.c_str(), chunkData.length(), false);
+        context->responseBuffer.remove(0, context->currentChunkRemaining + 2); // remove data + CRLF
+        context->currentChunkRemaining = 0;
+    }
+
+    // Completion check
+    if (context->headersComplete && !context->responseProcessed) {
+        bool complete = false;
+        if (context->chunked && context->chunkedComplete) {
+            complete = true;
+        } else if (!context->chunked && context->expectedContentLength > 0 && context->receivedContentLength >= context->expectedContentLength) {
+            complete = true; // extra bytes beyond Content-Length will be ignored
+        }
+        if (complete) {
+            if (_bodyChunkCallback) _bodyChunkCallback(nullptr, 0, true);
+            processResponse(context);
+        }
     }
 }
 
@@ -210,6 +279,10 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
             if (name.equalsIgnoreCase("Content-Length")) {
                 context->expectedContentLength = value.toInt();
                 context->response->setContentLength(context->expectedContentLength);
+            } else if (name.equalsIgnoreCase("Transfer-Encoding")) {
+                if (value.equalsIgnoreCase("chunked")) {
+                    context->chunked = true;
+                }
             }
         }
         
@@ -224,6 +297,7 @@ void AsyncHttpClient::processResponse(RequestContext* context) {
     context->responseProcessed = true;
     
     if (context->onSuccess) {
+        // WARNING: response pointer only valid inside callback (is freed after return)
         context->onSuccess(context->response);
     }
     cleanup(context);
@@ -240,12 +314,10 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
     if (context->response) {
         delete context->response;
     }
-#if !ASYNC_TCP_HAS_TIMEOUT
     auto it = std::find(_activeRequests.begin(), _activeRequests.end(), context);
     if (it != _activeRequests.end()) {
         _activeRequests.erase(it);
     }
-#endif
     delete context;
 }
 
@@ -259,17 +331,19 @@ void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError erro
     cleanup(context);
 }
 
-#if !ASYNC_TCP_HAS_TIMEOUT
 void AsyncHttpClient::loop() {
     uint32_t now = millis();
     for (auto it = _activeRequests.begin(); it != _activeRequests.end(); ) {
         RequestContext* ctx = *it;
+        #if !ASYNC_TCP_HAS_TIMEOUT
         if (!ctx->responseProcessed && (now - ctx->timeoutTimer) >= ctx->request->getTimeout()) {
             triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
-            it = _activeRequests.erase(it);
+        }
+        #endif
+        if (ctx->responseProcessed) {
+            it = _activeRequests.erase(it); // removal happens after cleanup
         } else {
             ++it;
         }
     }
 }
-#endif

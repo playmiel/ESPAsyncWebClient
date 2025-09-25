@@ -33,6 +33,12 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install --upgrade platformio
+    - name: Cache PlatformIO
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.platformio/.cache
+        key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
     
     - name: Test with AsyncTCP version
       run: |
@@ -123,7 +129,13 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install --upgrade platformio
-    
+    - name: Cache PlatformIO
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.platformio/.cache
+        key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+
     - name: Test with Arduino framework version
       run: |
         mkdir -p /tmp/framework_test/lib/ESPAsyncWebClient
@@ -162,3 +174,39 @@ jobs:
         
         cd /tmp/framework_test
         pio run -e esp32dev
+
+  cpp-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+      - name: Run unit tests (parseUrl C++)
+        run: |
+          pio test -e esp32dev -v
+
+  python-parse-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+      - name: Run pytest parse url mirror
+        run: |
+          pytest -q test_parse_url.py
+
+    

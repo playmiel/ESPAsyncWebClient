@@ -29,8 +29,9 @@ jobs:
     - name: Cache PlatformIO
       uses: actions/cache@v4
       with:
-        path: ~/.platformio
-        key: ${{ runner.os }}-${{ hashFiles('**/lockfiles') }}
+        path: |
+          ~/.platformio/.cache
+        key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -46,35 +47,35 @@ jobs:
       run: |
         example_name="${{ matrix.example }}"
         test_dir="/tmp/test_${example_name}_${{ matrix.platform }}"
-        
+
         echo "Creating test project for ${example_name} on ${{ matrix.platform }}..."
         mkdir -p "$test_dir/src"
         mkdir -p "$test_dir/lib/ESPAsyncWebClient"
-        
+
         # Copy example as main source (rename .ino to .cpp)
         cp "examples/${example_name}/${example_name}.ino" "$test_dir/src/main.cpp"
-        
+
         # Copy library source
         cp -r src/* "$test_dir/lib/ESPAsyncWebClient/"
-        
+
         # Create platformio.ini specific for this test
-        cat > "$test_dir/platformio.ini" << EOF
+        cat > "$test_dir/platformio.ini" << 'EOF'
         [platformio]
         default_envs = test_env
-        
+
         [env:test_env]
-        platform = ${{ matrix.platform == 'esp32dev' && 'espressif32' }}
-        board = ${{ matrix.platform }}
+        platform = espressif32
+        board = esp32dev
         framework = arduino
         monitor_speed = 115200
-        build_flags = 
+        build_flags =
             -DCOMPILE_TEST_ONLY
             -Wall
-        lib_deps = 
-            ${{ matrix.platform == 'esp32dev' && 'https://github.com/ESP32Async/AsyncTCP.git' }}
+        lib_deps =
+            https://github.com/ESP32Async/AsyncTCP.git
             bblanchon/ArduinoJson@^6.21.0
         EOF
-        
+
         echo "Created test structure:"
         ls -la "$test_dir"
         echo "platformio.ini content:"

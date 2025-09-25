@@ -1,4 +1,6 @@
 import pytest
+import re
+from pathlib import Path
 
 
 def parse_url(url: str):
@@ -42,25 +44,20 @@ def parse_url(url: str):
     return host, path, port, secure
 
 
-def test_parse_url_query_without_path():
-    host, path, port, secure = parse_url("http://example.com?foo=bar")
-    assert host == "example.com"
-    assert path == "/?foo=bar"
-    assert port == 80
-    assert not secure
+def load_cases():
+    header = Path(__file__).parent / "url_test_cases.h"
+    if not header.exists():
+        return []
+    content = header.read_text()
+    pattern = re.compile(r'X\("([^"\\]+)","([^"\\]+)","([^"\\]+)",(\d+),(true|false)\)')
+    cases = []
+    for m in pattern.finditer(content):
+        url, host, path, port, secure = m.groups()
+        cases.append((url, host, path, int(port), secure == 'true'))
+    return cases
 
 
-def test_parse_url_https_with_path_and_query():
-    host, path, port, secure = parse_url("https://example.com/path?foo=bar")
-    assert host == "example.com"
-    assert path == "/path?foo=bar"
-    assert port == 443
-    assert secure
-
-
-def test_parse_url_simple():
-    host, path, port, secure = parse_url("http://example.com")
-    assert host == "example.com"
-    assert path == "/"
-    assert port == 80
-    assert not secure
+@pytest.mark.parametrize("url,exp_host,exp_path,exp_port,exp_secure", load_cases())
+def test_parse_url_table(url, exp_host, exp_path, exp_port, exp_secure):
+    host, path, port, secure = parse_url(url)
+    assert (host, path, port, secure) == (exp_host, exp_path, exp_port, exp_secure)

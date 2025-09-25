@@ -15,7 +15,9 @@ enum HttpClientError {
     CONNECTION_FAILED = -1,
     HEADER_PARSE_FAILED = -2,
     CONNECTION_CLOSED = -3,
-    REQUEST_TIMEOUT = -4
+    REQUEST_TIMEOUT = -4,
+    HTTPS_NOT_SUPPORTED = -5,
+    CHUNKED_DECODE_FAILED = -6
 };
 
 inline const char* httpClientErrorToString(HttpClientError error) {
@@ -28,6 +30,10 @@ inline const char* httpClientErrorToString(HttpClientError error) {
             return "Connection closed before headers received";
         case REQUEST_TIMEOUT:
             return "Request timeout";
+        case HTTPS_NOT_SUPPORTED:
+            return "HTTPS not implemented";
+        case CHUNKED_DECODE_FAILED:
+            return "Failed to decode chunked body";
         default:
             return "Network error";
     }
