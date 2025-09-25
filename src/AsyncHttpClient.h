@@ -1,4 +1,4 @@
-// Enhanced Async HTTP Client with queueing, streaming body, per-request & global chunk callbacks,
+// Enhanced Async HTTP Client with queueing, streaming body, global chunk callback,
 // basic auth helper, HEAD/PATCH wrappers, and separate connect timeout.
 
 #ifndef ASYNC_HTTP_CLIENT_H
@@ -17,7 +17,7 @@ public:
     typedef std::function<void(AsyncHttpResponse*)> SuccessCallback;
     typedef std::function<void(HttpClientError, const char*)> ErrorCallback;
     typedef std::function<void(const char* data, size_t len, bool final)> BodyChunkCallback; // global
-    // (Per-request chunk callback retiré pour simplification API)
+    // (Per-request chunk callback removed for API simplification)
 
     AsyncHttpClient();
     ~AsyncHttpClient();
@@ -52,7 +52,6 @@ public:
     // Removed per-request chunk overload (was experimental)
 #ifdef ASYNC_HTTP_LEGACY_VOID_API
     void request_legacy(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr) { (void)request; (void)this->request(request, onSuccess, onError); }
-    void request_legacy(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError, PerRequestBodyChunkCallback onChunk) { (void)request; (void)this->request(request, onSuccess, onError, onChunk); }
 #endif
     // Abort by id (returns true if found and aborted)
     bool abort(uint32_t requestId);

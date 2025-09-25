@@ -59,7 +59,7 @@ Changes since 1.0.0
 
 - Fixed compilation warnings
 
-### Removed
+### Removed / Cleaned
 
 - Dropped ESP8266 related documentation/claims (library now targets ESP32 only)
 
@@ -69,7 +69,7 @@ Changes since 1.0.0
 - CompileTest examples
 - HttpClientError enumeration and error string utility
 
-### Changed
+### Changed (Stability)
 
 - Error callbacks now use HttpClientError enumeration instead of raw integers
 
@@ -83,11 +83,7 @@ Changes since 1.0.0
 
 ### Planned
 
-- (placeholder)
-
-### Removed
-
-- Per-request body chunk callback API (unstable / deferred). Global `onBodyChunk` remains.
+- (no changes yet)
 
 ## [1.0.2] - 2025-09-25
 
@@ -106,7 +102,7 @@ Changes since 1.0.0
 - `handleDisconnect` now detects truncated bodies (Content-Length short or chunked incomplete)
 - README updated: new methods, error table, documented abort & streaming
 
-### Fixed
+### Fixed (Reliability)
 
 - Potential invalid iteration when triggering cleanup inside timeout / error paths
 - Chunk size parsing failure cases now yield `CHUNKED_DECODE_FAILED`
@@ -115,4 +111,8 @@ Changes since 1.0.0
 
 - Unified abort semantics (distinct `ABORTED` code instead of reusing `CONNECTION_CLOSED`)
 - Clear separation of connect vs total timeout logic
+
+### Removed
+
+- Per-request body chunk callback API (unstable / deferred). Global `onBodyChunk` remains.
 

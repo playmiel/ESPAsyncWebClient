@@ -157,7 +157,22 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             if (!parseChunkSizeLine(sizeLine, &chunkSize)) { triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size parse error"); return; }
             context->currentChunkRemaining = chunkSize;
             context->responseBuffer.remove(0, lineEnd + 2);
-            if (chunkSize == 0) { context->chunkedComplete = true; int crlf = context->responseBuffer.indexOf("\r\n"); if (crlf != -1) context->responseBuffer.remove(0, crlf + 2); break; }
+            if (chunkSize == 0) {
+                // Final chunk: mark complete and purge any (optional) trailer headers.
+                context->chunkedComplete = true;
+                // Trailer section ends with an empty line (CRLF CRLF). We already consumed size line.
+                while (true) {
+                    int lineEnd2 = context->responseBuffer.indexOf("\r\n");
+                    if (lineEnd2 == -1) break; // incomplete, wait for more
+                    if (lineEnd2 == 0) { // empty line => end of trailers
+                        context->responseBuffer.remove(0, 2);
+                        break;
+                    }
+                    // discard this trailer line
+                    context->responseBuffer.remove(0, lineEnd2 + 2);
+                }
+                break;
+            }
         }
         if ((int)context->responseBuffer.length() < (int)(context->currentChunkRemaining + 2)) break;
         String chunkData = context->responseBuffer.substring(0, context->currentChunkRemaining);
@@ -219,7 +234,9 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
 }
 
 void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, int8_t error) {
-    if (context->responseProcessed) return; triggerError(context, static_cast<HttpClientError>(error), "Network error"); }
+    if (context->responseProcessed) return;
+    triggerError(context, static_cast<HttpClientError>(error), "Network error");
+}
 
 bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String& headerData) {
     int firstLineEnd = headerData.indexOf("\r\n"); if (firstLineEnd == -1) return false; String statusLine = headerData.substring(0, firstLineEnd);
@@ -241,7 +258,11 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
 }
 
 void AsyncHttpClient::processResponse(RequestContext* context) {
-    if (context->responseProcessed) return; context->responseProcessed = true; if (context->onSuccess) context->onSuccess(context->response); cleanup(context); }
+    if (context->responseProcessed) return;
+    context->responseProcessed = true;
+    if (context->onSuccess) context->onSuccess(context->response);
+    cleanup(context);
+}
 
 void AsyncHttpClient::cleanup(RequestContext* context) {
     if (context->client) { context->client->close(); delete context->client; }
@@ -252,7 +273,11 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
 }
 
 void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage) {
-    if (context->responseProcessed) return; context->responseProcessed = true; if (context->onError) context->onError(errorCode, errorMessage); cleanup(context); }
+    if (context->responseProcessed) return;
+    context->responseProcessed = true;
+    if (context->onError) context->onError(errorCode, errorMessage);
+    cleanup(context);
+}
 
 void AsyncHttpClient::loop() {
     uint32_t now = millis();
@@ -274,15 +299,23 @@ void AsyncHttpClient::loop() {
 
 void AsyncHttpClient::tryDequeue() {
     while (_maxParallel == 0 || _activeRequests.size() < _maxParallel) {
-        if (_pendingQueue.empty()) break; RequestContext* ctx = _pendingQueue.front(); _pendingQueue.erase(_pendingQueue.begin()); executeRequest(ctx);
+        if (_pendingQueue.empty()) break;
+        RequestContext* ctx = _pendingQueue.front();
+        _pendingQueue.erase(_pendingQueue.begin());
+        executeRequest(ctx);
     }
 }
 
 void AsyncHttpClient::sendStreamData(RequestContext* context) {
-    if (!context->client || !context->request->hasBodyStream()) return; if (!context->client->canSend()) return;
-    auto provider = context->request->getBodyProvider(); if (!provider) return;
+    if (!context->client || !context->request->hasBodyStream()) return;
+    if (!context->client->canSend()) return;
+    auto provider = context->request->getBodyProvider();
+    if (!provider) return;
     uint8_t temp[512]; bool final=false; int written = provider(temp, sizeof(temp), &final);
-    if (written < 0) { triggerError(context, BODY_STREAM_READ_FAILED, "Body stream read failed"); return; }
+    if (written < 0) {
+        triggerError(context, BODY_STREAM_READ_FAILED, "Body stream read failed");
+        return;
+    }
     if (written > 0) context->client->write((const char*)temp, written);
     if (final) context->streamingBodyInProgress = false;
 }

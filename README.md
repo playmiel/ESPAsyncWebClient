@@ -365,40 +365,40 @@ Limitations:
 - Chunked: minimal (no trailers)
 - Full in-memory buffering (even with streaming hook)
 - No automatic redirects (3xx not followed)
-- Pas de **keep-alive prolongé** : en-tête par défaut `Connection: close`; aucune réutilisation de connexion.
-- Timeout manuel requis si la version AsyncTCP utilisée ne fournit pas `setTimeout` (mettre `client.loop()` dans `loop()`).
-- Aucune gestion spécifique des encodages de contenu (gzip/deflate ignorés si envoyés).
+- No long-lived keep-alive: default header `Connection: close`; no connection reuse currently.
+- Manual timeout loop required if AsyncTCP version lacks `setTimeout` (call `client.loop()` in `loop()`).
+- No specific content-encoding handling (gzip/deflate ignored if sent).
 
-## Cycle de vie des objets / Ownership
+## Object lifecycle / Ownership
 
-1. `AsyncHttpClient::makeRequest()` crée un `AsyncHttpRequest` dynamique (ou vous passez le vôtre à `request()`).
-2. `request()` alloue un `RequestContext`, un `AsyncHttpResponse` et un `AsyncClient`.
-3. Connexion ouverte → envoi de la requête HTTP construite (`buildHttpRequest()`).
-4. Réception: tampon de headers jusqu'à `\r\n\r\n`, puis accumulation body.
-5. Sur succès complet : callback succès appelé avec un pointeur `AsyncHttpResponse*` (valable uniquement pendant le callback).
-6. Sur erreur ou après callback succès : `cleanup()` détruit `AsyncClient`, `AsyncHttpRequest`, `AsyncHttpResponse`, `RequestContext`.
-7. Ne **pas** conserver de pointeur / référence après retour du callback (dangling pointer garanti).
+1. `AsyncHttpClient::makeRequest()` creates a dynamic `AsyncHttpRequest` (or you pass yours to `request()`).
+2. `request()` allocates a `RequestContext`, an `AsyncHttpResponse` and an `AsyncClient`.
+3. Once connected the fully built HTTP request is written (`buildHttpRequest()`).
+4. Reception: headers buffered until `\r\n\r\n`, then body accumulation (or chunk decoding).
+5. On complete success: success callback invoked with `AsyncHttpResponse*` (valid only during the callback).
+6. On error or after success callback returns: `cleanup()` deletes `AsyncClient`, `AsyncHttpRequest`, `AsyncHttpResponse`, `RequestContext`.
+7. Do **not** keep any pointer/reference after callback return (it will dangle).
 
-Pour fournir un corps très volumineux ou un streaming, il faudra insérer un hook dans `handleData` après `headersComplete` avant `appendBody`.
+For very large bodies or future streaming options, a hook would be placed inside `handleData` after `headersComplete` before `appendBody`.
 
-## Codes d'erreur (mis à jour)
+## Error Codes (updated)
 
-| Code | Nom | Signification (FR) |
+| Code | Enum | Meaning |
 |------|-----|--------------------|
-| -1 | CONNECTION_FAILED | Échec connexion TCP |
-| -2 | HEADER_PARSE_FAILED | En-têtes HTTP invalides |
-| -3 | CONNECTION_CLOSED | Connexion fermée avant headers ou corps tronqué |
-| -4 | REQUEST_TIMEOUT | Timeout total dépassé |
-| -5 | HTTPS_NOT_SUPPORTED | HTTPS non supporté |
-| -6 | CHUNKED_DECODE_FAILED | Erreur décodage chunked |
-| -7 | CONNECT_TIMEOUT | Timeout spécifique de connexion |
-| -8 | BODY_STREAM_READ_FAILED | Lecture corps stream échouée |
-| -9 | ABORTED | Annulé par l'utilisateur |
-| >0 | (AsyncTCP) | Code d'erreur bas niveau AsyncTCP |
+| -1 | CONNECTION_FAILED | Failed to initiate TCP connection |
+| -2 | HEADER_PARSE_FAILED | Invalid HTTP response headers |
+| -3 | CONNECTION_CLOSED | Connection closed before headers or body truncated |
+| -4 | REQUEST_TIMEOUT | Total request timeout exceeded |
+| -5 | HTTPS_NOT_SUPPORTED | HTTPS not supported yet |
+| -6 | CHUNKED_DECODE_FAILED | Failed to decode chunked body |
+| -7 | CONNECT_TIMEOUT | Connect phase timeout |
+| -8 | BODY_STREAM_READ_FAILED | Body streaming provider failed |
+| -9 | ABORTED | Aborted by user |
+| >0 | (AsyncTCP) | Underlying AsyncTCP positive error codes |
 
-Codes positifs (>0) : valeurs directes retournées par AsyncTCP; utiliser le code numérique et un logging réseau adapté.
+Positive codes (>0): direct AsyncTCP codes; inspect numeric value for low-level diagnostics.
 
-Exemple de mapping dans un callback :
+Example mapping in a callback:
 
 ```cpp
 client.get("http://example.com", 
@@ -460,7 +460,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Support
 
 - Streaming request body (no-copy) via setBodyStream
-- Global and per-request body chunk callbacks
+- Global body chunk callback (per-request callback removed for API simplicity)
 - Basic Auth helper (request->setBasicAuth)
 - Query param builder (addQueryParam/finalizeQueryParams)
 - Optional Accept-Encoding: gzip (no automatic decompression yet)
@@ -479,7 +479,7 @@ A future optional flag (`ASYNC_HTTP_ENABLE_GZIP_DECODE`) may add a tiny inflater
 
 HTTPS is not implemented. Any `https://` URL returns `HTTPS_NOT_SUPPORTED`. A future drop-in TLS client (replacing `AsyncClient`) is planned without breaking the public API.
 
-<!-- Per-request chunk callback retiré pour réduire la surface API; utiliser uniquement client.onBodyChunk -->
+<!-- Note: per-request chunk callback removed; use global client.onBodyChunk -->
 
 ### API Change: Request ID Return (Breaking)
 

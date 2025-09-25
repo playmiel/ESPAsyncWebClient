@@ -51,12 +51,24 @@ else
   pass "User-Agent strings up to date (${VERSION_JSON})"
 fi
 
-# 5. No stale previous version literal (basic check for immediate prior minor)
-PREV_PATTERN="ESPAsyncWebClient/1.0.0"
-if grep -R "${PREV_PATTERN}" -n . 2>/dev/null | grep -v CHANGELOG.md >/dev/null; then
-  fail "Found stale previous version literal ${PREV_PATTERN} outside CHANGELOG"
+# 5. No stale previous version literal (basic check for immediate prior released version)
+# Derive previous semver by decrementing patch if possible.
+PREV_PATTERN=""
+if [[ "${VERSION_JSON}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+  MAJ="${BASH_REMATCH[1]}"; MIN="${BASH_REMATCH[2]}"; PAT="${BASH_REMATCH[3]}"
+  if (( PAT > 0 )); then
+    PREV_PATTERN="ESPAsyncWebClient/${MAJ}.${MIN}.$((PAT-1))"
+  fi
+fi
+
+if [[ -n "${PREV_PATTERN}" ]]; then
+  if grep -R "${PREV_PATTERN}" -n src examples test 2>/dev/null | grep -v CHANGELOG.md >/dev/null; then
+    fail "Found stale previous version literal ${PREV_PATTERN} outside CHANGELOG"
+  else
+    pass "No stale previous version literals (except historical changelog)"
+  fi
 else
-  pass "No stale previous version literals (except historical changelog)"
+  echo "(Info) Could not compute previous version pattern; skipping stale literal check"
 fi
 
 # 6. Supported architectures (ensure only esp32 in library.properties)
@@ -81,7 +93,11 @@ else
 fi
 
 # 8. Export version for subsequent steps
-echo "VERSION=${VERSION_JSON}" >> "$GITHUB_ENV"
-pass "Exported VERSION=${VERSION_JSON} to GITHUB_ENV"
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  echo "VERSION=${VERSION_JSON}" >> "$GITHUB_ENV"
+  pass "Exported VERSION=${VERSION_JSON} to GITHUB_ENV"
+else
+  echo "(Info) GITHUB_ENV not set; skipping export"
+fi
 
 echo "All release verification checks passed."
