@@ -282,7 +282,7 @@ void AsyncHttpClient::processResponse(RequestContext* context) {
 
 void AsyncHttpClient::cleanup(RequestContext* context) {
     if (context->client) {
-        // Détacher les callbacks pour éviter toute invocation tardive
+        // Detach callbacks to avoid any late invocation
         context->client->onConnect(nullptr);
         context->client->onData(nullptr);
         context->client->onDisconnect(nullptr);
