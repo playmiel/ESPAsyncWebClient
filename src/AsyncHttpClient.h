@@ -124,7 +124,7 @@ private:
     void tryDequeue();
     void sendStreamData(RequestContext* context);
 public:
-    // Exposé publiquement pour les tests et l'usage interne avancé
+    // Exposed publicly for tests and advanced internal usage
     static bool parseChunkSizeLine(const String& line, uint32_t* outSize);
 private:
 };
