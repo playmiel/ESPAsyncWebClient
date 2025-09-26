@@ -145,8 +145,9 @@ class AsyncHttpClient {
     void triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage);
     void tryDequeue();
     void sendStreamData(RequestContext* context);
-public:
-        // Exposed publicly for tests and advanced internal usage
+
+  public:
+    // Exposed publicly for tests and advanced internal usage
     static bool parseChunkSizeLine(const String& line, uint32_t* outSize);
 
   private:

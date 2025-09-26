@@ -292,7 +292,8 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
         triggerError(context, CHUNKED_DECODE_FAILED, "Failed to decode chunked body");
         return;
     }
-    if (!context->chunked && context->expectedContentLength > 0 && context->receivedContentLength < context->expectedContentLength) {
+    if (!context->chunked && context->expectedContentLength > 0 &&
+        context->receivedContentLength < context->expectedContentLength) {
         // Body truncated
         triggerError(context, CONNECTION_CLOSED, "Truncated response");
         return;
