@@ -25,6 +25,8 @@
   "dependencies": [
     {
       "name": "AsyncTCP",
+      "owner": "esp32async",
+      "version": "^3.4.8",
       "platforms": ["espressif32"]
     }
   ],

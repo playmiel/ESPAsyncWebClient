@@ -72,7 +72,8 @@ void setup() {
 
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
-    client.loop();
+    // ESP32 fallback mode: the library auto-ticks timeouts via a FreeRTOS task.
+    // If you define -DASYNC_HTTP_DISABLE_AUTOLOOP, call client.loop() periodically here.
+    // client.loop();
 #endif
-    delay(1000);
 }

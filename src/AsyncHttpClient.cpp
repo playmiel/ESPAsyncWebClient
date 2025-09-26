@@ -6,9 +6,47 @@
 #include <cerrno>
 
 AsyncHttpClient::AsyncHttpClient()
-    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.2"), _bodyChunkCallback(nullptr) {}
+    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.2"), _bodyChunkCallback(nullptr)
+{
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32)
+    // Spawn a lightweight auto-loop task so users don't need to call client.loop() manually.
+    // Can be disabled by defining ASYNC_HTTP_DISABLE_AUTOLOOP at compile time.
+    #ifndef ASYNC_HTTP_DISABLE_AUTOLOOP
+    xTaskCreatePinnedToCore(
+        _autoLoopTaskThunk,        // task entry
+        "AsyncHttpAutoLoop",      // name
+        2048,                      // stack words
+        this,                      // parameter
+        1,                         // priority (low)
+        &_autoLoopTaskHandle,      // handle out
+        tskNO_AFFINITY             // any core
+    );
+    #endif
+#endif
+}
 
-AsyncHttpClient::~AsyncHttpClient() {}
+AsyncHttpClient::~AsyncHttpClient() {
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32)
+    #ifndef ASYNC_HTTP_DISABLE_AUTOLOOP
+    if (_autoLoopTaskHandle) {
+        TaskHandle_t h = _autoLoopTaskHandle;
+        _autoLoopTaskHandle = nullptr;
+        vTaskDelete(h);
+    }
+    #endif
+#endif
+}
+
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32)
+void AsyncHttpClient::_autoLoopTaskThunk(void* param) {
+    AsyncHttpClient* self = static_cast<AsyncHttpClient*>(param);
+    const TickType_t delayTicks = pdMS_TO_TICKS(20); // ~50 Hz tick
+    while (true) {
+        if (self) self->loop();
+        vTaskDelay(delayTicks);
+    }
+}
+#endif
 
 uint32_t AsyncHttpClient::get(const char* url, SuccessCallback onSuccess, ErrorCallback onError) {
     return makeRequest(HTTP_GET, url, nullptr, onSuccess, onError);

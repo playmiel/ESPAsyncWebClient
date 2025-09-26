@@ -11,6 +11,10 @@
 #include "HttpResponse.h"
 #include "HttpCommon.h"
 #include <AsyncTCP.h>
+#if defined(ARDUINO_ARCH_ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#endif
 
 class AsyncHttpClient {
   public:
@@ -84,6 +88,12 @@ class AsyncHttpClient {
     void loop(); // manual timeout / queue progression
 
   private:
+    // Internal auto-loop task for fallback timeout mode (ESP32 only)
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32)
+    static void _autoLoopTaskThunk(void* param);
+    TaskHandle_t _autoLoopTaskHandle = nullptr;
+#endif
+
     struct RequestContext {
         AsyncHttpRequest* request;
         AsyncHttpResponse* response;

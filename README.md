@@ -74,14 +74,17 @@ void setup() {
 
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
-    client.loop();
+    // With older AsyncTCP (no native timeout), the library now auto-ticks via a FreeRTOS task on ESP32.
+    // You generally don't need to call client.loop() yourself anymore.
+    // If you define -DASYNC_HTTP_DISABLE_AUTOLOOP, then call client.loop() periodically here.
+    // client.loop();
 #endif
-    delay(1000);
 }
 ```
 
-If your AsyncTCP library does not provide native timeout support (`setTimeout`),
-remember to call `client.loop()` regularly to handle manual timeout checks.
+On ESP32, when AsyncTCP lacks native timeout support, the library automatically creates a tiny FreeRTOS task
+that drives internal timeouts. If you prefer manual control, build with `-DASYNC_HTTP_DISABLE_AUTOLOOP` and
+call `client.loop()` periodically yourself.
 
 ## API Reference
 

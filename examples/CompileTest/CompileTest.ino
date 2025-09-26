@@ -100,9 +100,11 @@ void testHttpMethodsCompilation() {
 }
 
 void loop() {
-#if !ASYNC_TCP_HAS_TIMEOUT
-    client.loop();
-#endif
+    // On ESP32 fallback mode, the library auto-ticks timeouts via a FreeRTOS task.
+    // If you define -DASYNC_HTTP_DISABLE_AUTOLOOP, call client.loop() periodically here.
+    // #if !ASYNC_TCP_HAS_TIMEOUT
+    // client.loop();
+    // #endif
     // Simple heartbeat to show the program is running
     static unsigned long lastHeartbeat = 0;
     unsigned long now = millis();
