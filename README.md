@@ -337,7 +337,7 @@ Limitations:
 - No advanced validation (extensions, checksums)
 - On parse failure you get `CHUNKED_DECODE_FAILED`
 
-### HTTPS (non supporté)
+### HTTPS (not supported)
 
 `https://` URLs return `HTTPS_NOT_SUPPORTED`. To add TLS later, wrap or replace `AsyncClient` with a secure implementation.
 
