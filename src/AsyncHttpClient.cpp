@@ -229,7 +229,7 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
     if (!context->headersComplete) { triggerError(context, CONNECTION_CLOSED, "Connection closed before headers received"); return; }
     // Headers parsed: determine if body complete.
     if (context->chunked && !context->chunkedComplete) {
-        // Connexion fermée avant réception du chunk final
+        // Connection closed before receiving final chunk
         triggerError(context, CHUNKED_DECODE_FAILED, "Failed to decode chunked body");
         return;
     }
