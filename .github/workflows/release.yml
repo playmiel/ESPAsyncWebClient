@@ -61,7 +61,7 @@ jobs:
       run: |
         VERSION=$(grep '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
         ARCHIVE="ESPAsyncWebClient-${VERSION}.zip"
-        zip -r "$ARCHIVE" src examples README.md CHANGELOG.md LICENSE library.json library.properties
+        zip -r "$ARCHIVE" src examples README.md LICENSE library.json library.properties
         echo "Created $ARCHIVE"
         echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
     - name: Upload build artifact
@@ -77,7 +77,7 @@ jobs:
         name: Release ${{ github.ref }}
         body: |
           ## Changes in this release
-          See CHANGELOG.md entry for ${{ github.ref }}
+          See the Git diff for this tag or the Releases page for details.
           
           ## Verification
           - Examples built successfully

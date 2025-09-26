@@ -6,7 +6,7 @@ AsyncHttpClient client;
 
 void setup() {
     Serial.begin(115200);
-    
+
     // Connect to WiFi
     WiFi.begin("your-ssid", "your-password");
     while (WiFi.status() != WL_CONNECTED) {
@@ -14,11 +14,12 @@ void setup() {
         Serial.println("Connecting to WiFi...");
     }
     Serial.println("Connected to WiFi");
-    
+
     // Make a POST request with data
     String postData = "name=ESP32&value=123&sensor=temperature";
-    
-    client.post("http://httpbin.org/post", postData.c_str(),
+
+    client.post(
+        "http://httpbin.org/post", postData.c_str(),
         [](AsyncHttpResponse* response) {
             Serial.println("POST Success!");
             Serial.printf("Status: %d\n", response->getStatusCode());
@@ -34,8 +35,7 @@ void setup() {
         },
         [](HttpClientError error, const char* message) {
             Serial.printf("POST Error: %s (%d)\n", httpClientErrorToString(error), (int)error);
-        }
-    );
+        });
 }
 
 void loop() {

@@ -1,4 +1,4 @@
-// Enhanced Async HTTP Client with queueing, streaming body, per-request & global chunk callbacks,
+// Enhanced Async HTTP Client with queueing, streaming body, global chunk callback,
 // basic auth helper, HEAD/PATCH wrappers, and separate connect timeout.
 
 #ifndef ASYNC_HTTP_CLIENT_H
@@ -13,41 +13,77 @@
 #include <AsyncTCP.h>
 
 class AsyncHttpClient {
-public:
+  public:
     typedef std::function<void(AsyncHttpResponse*)> SuccessCallback;
     typedef std::function<void(HttpClientError, const char*)> ErrorCallback;
     typedef std::function<void(const char* data, size_t len, bool final)> BodyChunkCallback; // global
-    typedef std::function<void(const char* data, size_t len, bool final)> PerRequestBodyChunkCallback; // per-request
+    // (Per-request chunk callback removed for API simplification)
 
     AsyncHttpClient();
     ~AsyncHttpClient();
 
     // Main HTTP methods
-    void get(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
-    void post(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
-    void put(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
-    void del(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
-    void head(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
-    void patch(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+    uint32_t get(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+    uint32_t post(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+    uint32_t put(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+    uint32_t del(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+    uint32_t head(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+    uint32_t patch(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+
+#ifdef ASYNC_HTTP_LEGACY_VOID_API
+    // Legacy void-return adapters (opt-in). They discard the returned request ID.
+    void get_legacy(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr) {
+        (void)get(url, onSuccess, onError);
+    }
+    void post_legacy(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr) {
+        (void)post(url, data, onSuccess, onError);
+    }
+    void put_legacy(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr) {
+        (void)put(url, data, onSuccess, onError);
+    }
+    void del_legacy(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr) {
+        (void)del(url, onSuccess, onError);
+    }
+    void head_legacy(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr) {
+        (void)head(url, onSuccess, onError);
+    }
+    void patch_legacy(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr) {
+        (void)patch(url, data, onSuccess, onError);
+    }
+#endif
 
     // Configuration methods
     void setHeader(const char* name, const char* value);
     void setTimeout(uint32_t timeout); // total request timeout
     void setUserAgent(const char* userAgent);
-    void setDefaultConnectTimeout(uint32_t ms) { _defaultConnectTimeout = ms; }
-    void setMaxParallel(uint16_t maxParallel) { _maxParallel = maxParallel; tryDequeue(); }
+    void setDefaultConnectTimeout(uint32_t ms) {
+        _defaultConnectTimeout = ms;
+    }
+    void setMaxParallel(uint16_t maxParallel) {
+        _maxParallel = maxParallel;
+        tryDequeue();
+    }
 
     // Advanced request method
-    void request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+    uint32_t request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+    // Removed per-request chunk overload (was experimental)
+#ifdef ASYNC_HTTP_LEGACY_VOID_API
+    void request_legacy(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr) {
+        (void)request;
+        (void)this->request(request, onSuccess, onError);
+    }
+#endif
     // Abort by id (returns true if found and aborted)
     bool abort(uint32_t requestId);
 
     // Global streaming body callback (applies for all responses unless overridden per-request in future)
-    void onBodyChunk(BodyChunkCallback cb) { _bodyChunkCallback = cb; }
+    void onBodyChunk(BodyChunkCallback cb) {
+        _bodyChunkCallback = cb;
+    }
 
     void loop(); // manual timeout / queue progression
 
-private:
+  private:
     struct RequestContext {
         AsyncHttpRequest* request;
         AsyncHttpResponse* response;
@@ -63,7 +99,7 @@ private:
         bool chunkedComplete;
         size_t currentChunkRemaining;
         uint32_t id;
-        PerRequestBodyChunkCallback perRequestChunkCb;
+        // perRequestChunkCb removed
         uint32_t connectStartMs;
         uint32_t connectTimeoutMs;
         bool headersSent;
@@ -72,16 +108,16 @@ private:
         uint32_t timeoutTimer;
 #endif
         RequestContext()
-            : request(nullptr), response(nullptr), client(nullptr),
-              headersComplete(false), responseProcessed(false),
-              expectedContentLength(0), receivedContentLength(0),
-              chunked(false), chunkedComplete(false), currentChunkRemaining(0),
-              id(0), perRequestChunkCb(nullptr), connectStartMs(0), connectTimeoutMs(0),
-              headersSent(false), streamingBodyInProgress(false)
+            : request(nullptr), response(nullptr), client(nullptr), headersComplete(false), responseProcessed(false),
+              expectedContentLength(0), receivedContentLength(0), chunked(false), chunkedComplete(false),
+              currentChunkRemaining(0), id(0), connectStartMs(0), connectTimeoutMs(0), headersSent(false),
+              streamingBodyInProgress(false)
 #if !ASYNC_TCP_HAS_TIMEOUT
-            , timeoutTimer(0)
+              ,
+              timeoutTimer(0)
 #endif
-        {}
+        {
+        }
     };
 
     std::vector<HttpHeader> _defaultHeaders;
@@ -95,8 +131,8 @@ private:
     uint32_t _defaultConnectTimeout = 5000;
 
     // Internal methods
-    void makeRequest(HttpMethod method, const char* url, const char* data,
-                     SuccessCallback onSuccess, ErrorCallback onError);
+    uint32_t makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
+                         ErrorCallback onError);
     void executeOrQueue(RequestContext* context);
     void executeRequest(RequestContext* context);
     void handleConnect(RequestContext* context, AsyncClient* client);
@@ -109,6 +145,12 @@ private:
     void triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage);
     void tryDequeue();
     void sendStreamData(RequestContext* context);
+
+  public:
+    // Exposed publicly for tests and advanced internal usage
+    static bool parseChunkSizeLine(const String& line, uint32_t* outSize);
+
+  private:
 };
 
 #endif // ASYNC_HTTP_CLIENT_H

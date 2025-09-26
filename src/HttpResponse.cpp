@@ -2,12 +2,9 @@
 
 String AsyncHttpResponse::_emptyString = "";
 
-AsyncHttpResponse::AsyncHttpResponse() 
-    : _statusCode(0), _contentLength(0) {
-}
+AsyncHttpResponse::AsyncHttpResponse() : _statusCode(0), _contentLength(0) {}
 
-AsyncHttpResponse::~AsyncHttpResponse() {
-}
+AsyncHttpResponse::~AsyncHttpResponse() {}
 
 const String& AsyncHttpResponse::getHeader(const String& name) const {
     for (const auto& header : _headers) {
