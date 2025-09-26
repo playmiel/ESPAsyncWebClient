@@ -6,7 +6,7 @@
 #include <cerrno>
 
 AsyncHttpClient::AsyncHttpClient()
-    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.2"), _bodyChunkCallback(nullptr)
+    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.3"), _bodyChunkCallback(nullptr)
 {
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32)
     // Spawn a lightweight auto-loop task so users don't need to call client.loop() manually.
@@ -333,7 +333,7 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
     if (!context->chunked && context->expectedContentLength > 0 &&
         context->receivedContentLength < context->expectedContentLength) {
         // Body truncated
-        triggerError(context, CONNECTION_CLOSED, "Truncated response");
+        triggerError(context, CONNECTION_CLOSED_MID_BODY, "Truncated response");
         return;
     }
     // Otherwise success: either Content-Length reached, or no Content-Length and closure marks the end

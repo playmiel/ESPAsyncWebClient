@@ -17,6 +17,7 @@ struct HttpHeader {
     HttpHeader(const String& n, const String& v) : name(n), value(v) {}
 };
 
+// Keep README.md "Error Codes" table in sync with this enum.
 enum HttpClientError {
     CONNECTION_FAILED = -1,
     HEADER_PARSE_FAILED = -2,
