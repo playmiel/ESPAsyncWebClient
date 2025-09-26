@@ -529,4 +529,4 @@ See `examples/StreamingUpload/StreamingUpload.ino` for a streaming (no-copy) upl
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for version history and changes.
+See the GitHub Releases page for version history and changes.

@@ -6,7 +6,7 @@ AsyncHttpClient client;
 
 void setup() {
     Serial.begin(115200);
-    
+
     // Connect to WiFi
     WiFi.begin("your-ssid", "your-password");
     while (WiFi.status() != WL_CONNECTED) {
@@ -14,15 +14,16 @@ void setup() {
         Serial.println("Connecting to WiFi...");
     }
     Serial.println("Connected to WiFi");
-    
+
     // Set global default headers
     client.setHeader("X-API-Key", "your-api-key-here");
     client.setHeader("Authorization", "Bearer your-token-here");
     client.setUserAgent("ESP32-CustomClient/1.0");
     client.setTimeout(15000); // 15 seconds timeout
-    
+
     // Make a request that will include the custom headers
-    client.get("http://httpbin.org/headers",
+    client.get(
+        "http://httpbin.org/headers",
         [](AsyncHttpResponse* response) {
             Serial.println("Request with custom headers successful!");
             Serial.printf("Status: %d\n", response->getStatusCode());
@@ -39,19 +40,19 @@ void setup() {
         },
         [](HttpClientError error, const char* message) {
             Serial.printf("Error: %s (%d)\n", httpClientErrorToString(error), (int)error);
-        }
-    );
-    
+        });
+
     delay(5000); // Wait 5 seconds
-    
+
     // Make another request with additional headers using the advanced API
     AsyncHttpRequest* customRequest = new AsyncHttpRequest(HTTP_POST, "http://httpbin.org/post");
     customRequest->setHeader("Content-Type", "application/json");
     customRequest->setHeader("X-Custom-Header", "CustomValue123");
     customRequest->setHeader("Accept", "application/json");
     customRequest->setBody("{\"message\":\"Hello from ESP32\",\"timestamp\":" + String(millis()) + "}");
-    
-    client.request(customRequest,
+
+    client.request(
+        customRequest,
         [](AsyncHttpResponse* response) {
             Serial.println("\nCustom JSON POST request successful!");
             Serial.printf("Status: %d\n", response->getStatusCode());
@@ -66,8 +67,7 @@ void setup() {
         },
         [](HttpClientError error, const char* message) {
             Serial.printf("Custom request error: %s (%d)\n", httpClientErrorToString(error), (int)error);
-        }
-    );
+        });
 }
 
 void loop() {

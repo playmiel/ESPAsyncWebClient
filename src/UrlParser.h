@@ -19,7 +19,7 @@ namespace UrlParser {
 
 struct ParsedUrl {
     std::string host;
-    std::string path;   // always begins with '/'
+    std::string path; // always begins with '/'
     uint16_t port = 80;
     bool secure = false;
 };

@@ -3,18 +3,17 @@
 
 String AsyncHttpRequest::_emptyString = "";
 
-AsyncHttpRequest::AsyncHttpRequest(HttpMethod method, const String& url) 
+AsyncHttpRequest::AsyncHttpRequest(HttpMethod method, const String& url)
     : _method(method), _url(url), _port(80), _secure(false), _timeout(10000) {
-    
+
     parseUrl(url);
-    
+
     // Set default headers
     setHeader("Connection", "close");
     setHeader("User-Agent", "ESPAsyncWebClient/1.0.2");
 }
 
-AsyncHttpRequest::~AsyncHttpRequest() {
-}
+AsyncHttpRequest::~AsyncHttpRequest() {}
 
 void AsyncHttpRequest::setHeader(const String& name, const String& value) {
     // Check if header already exists and update it
@@ -40,26 +39,26 @@ const String& AsyncHttpRequest::getHeader(const String& name) const {
 String AsyncHttpRequest::buildHttpRequest() const {
     String request = methodToString() + " " + _path + " HTTP/1.1\r\n";
     request += "Host: " + _host + "\r\n";
-    
+
     // Add all headers
     for (const auto& header : _headers) {
         request += header.name + ": " + header.value + "\r\n";
     }
-    
+
     // Add content length if we have a full (non-streamed) body
     if (!_body.isEmpty()) {
         request += "Content-Length: " + String(_body.length()) + "\r\n";
     } else if (_bodyProvider != nullptr) {
         request += "Content-Length: " + String(_streamLength) + "\r\n"; // caller must provide accurate length
     }
-    
+
     request += "\r\n";
-    
+
     // Add body if present
     if (!_body.isEmpty()) {
         request += _body;
     } // stream body is written later by client using buildHeadersOnly
-    
+
     return request;
 }
 
@@ -93,13 +92,20 @@ bool AsyncHttpRequest::parseUrl(const String& url) {
 
 String AsyncHttpRequest::methodToString() const {
     switch (_method) {
-        case HTTP_GET: return "GET";
-        case HTTP_POST: return "POST";
-        case HTTP_PUT: return "PUT";
-        case HTTP_DELETE: return "DELETE";
-        case HTTP_HEAD: return "HEAD";
-        case HTTP_PATCH: return "PATCH";
-        default: return "GET";
+    case HTTP_GET:
+        return "GET";
+    case HTTP_POST:
+        return "POST";
+    case HTTP_PUT:
+        return "PUT";
+    case HTTP_DELETE:
+        return "DELETE";
+    case HTTP_HEAD:
+        return "HEAD";
+    case HTTP_PATCH:
+        return "PATCH";
+    default:
+        return "GET";
     }
 }
 
@@ -114,19 +120,21 @@ void AsyncHttpRequest::addQueryParam(const String& key, const String& value) {
         }
         _queryFinalized = false;
     } else {
-        if (!_path.endsWith("?") && !_path.endsWith("&")) _path += '&';
+        if (!_path.endsWith("?") && !_path.endsWith("&"))
+            _path += '&';
     }
     // Basic URL encoding for space and a few chars (minimal to avoid heavy code)
     auto encode = [](const String& in) -> String {
         String out;
         const char* hex = "0123456789ABCDEF";
-        for (size_t i=0;i<in.length();++i) {
+        for (size_t i = 0; i < in.length(); ++i) {
             char c = in[i];
-            if ((c >= 'a' && c <= 'z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='-'||c=='_'||c=='.'||c=='~') {
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+                c == '.' || c == '~') {
                 out += c;
             } else {
                 out += '%';
-                out += hex[(c>>4)&0xF];
+                out += hex[(c >> 4) & 0xF];
                 out += hex[c & 0xF];
             }
         }
@@ -147,16 +155,24 @@ void AsyncHttpRequest::setBasicAuth(const String& user, const String& pass) {
     static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     String out;
     size_t len = creds.length();
-    for (size_t i=0;i<len;i+=3) {
+    for (size_t i = 0; i < len; i += 3) {
         uint32_t v = (uint8_t)creds[i] << 16;
-        if (i+1 < len) v |= (uint8_t)creds[i+1] << 8;
-        if (i+2 < len) v |= (uint8_t)creds[i+2];
+        if (i + 1 < len)
+            v |= (uint8_t)creds[i + 1] << 8;
+        if (i + 2 < len)
+            v |= (uint8_t)creds[i + 2];
         out += b64[(v >> 18) & 0x3F];
         out += b64[(v >> 12) & 0x3F];
-        if (i+1 < len) out += b64[(v >> 6) & 0x3F]; else out += '=';
-        if (i+2 < len) out += b64[v & 0x3F]; else out += '=';
+        if (i + 1 < len)
+            out += b64[(v >> 6) & 0x3F];
+        else
+            out += '=';
+        if (i + 2 < len)
+            out += b64[v & 0x3F];
+        else
+            out += '=';
     }
-    setHeader("Authorization", String("Basic ")+out);
+    setHeader("Authorization", String("Basic ") + out);
 }
 
 void AsyncHttpRequest::enableGzipAcceptEncoding(bool enable) {

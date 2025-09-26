@@ -22,11 +22,15 @@ else
   pass "Version files consistent (${VERSION_JSON})"
 fi
 
-# 2. Changelog entry
-if ! grep -Eq "^## \\[${VERSION_JSON}\\]" CHANGELOG.md; then
-  fail "CHANGELOG.md missing heading for [${VERSION_JSON}]"
+# 2. Changelog entry (optional)
+if [[ -f CHANGELOG.md ]]; then
+  if grep -Eq "^## \\[${VERSION_JSON}\\]" CHANGELOG.md; then
+    pass "Changelog contains entry for ${VERSION_JSON}"
+  else
+    echo "(Info) CHANGELOG.md missing heading for [${VERSION_JSON}]; skipping changelog check";
+  fi
 else
-  pass "Changelog contains entry for ${VERSION_JSON}"
+  echo "(Info) No CHANGELOG.md; skipping changelog entry check";
 fi
 
 # 3. README badge owner (no placeholder)

@@ -3,7 +3,9 @@
 namespace UrlParser {
 
 static bool startsWith(const std::string& s, const char* prefix) {
-    size_t n = 0; while (prefix[n] != '\0') ++n; // strlen
+    size_t n = 0;
+    while (prefix[n] != '\0')
+        ++n; // strlen
     return s.size() >= n && s.compare(0, n, prefix) == 0;
 }
 

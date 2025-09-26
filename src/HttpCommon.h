@@ -5,13 +5,14 @@
 
 // Feature flags (can be overridden before including library headers)
 #ifndef ASYNC_HTTP_ENABLE_GZIP_DECODE
-#define ASYNC_HTTP_ENABLE_GZIP_DECODE 0  // 0 = only set Accept-Encoding header (no inflation). 1 = future: enable minimal gzip inflate.
+#define ASYNC_HTTP_ENABLE_GZIP_DECODE                                                                                  \
+    0 // 0 = only set Accept-Encoding header (no inflation). 1 = future: enable minimal gzip inflate.
 #endif
 
 struct HttpHeader {
     String name;
     String value;
-    
+
     HttpHeader() {}
     HttpHeader(const String& n, const String& v) : name(n), value(v) {}
 };
@@ -31,28 +32,28 @@ enum HttpClientError {
 
 inline const char* httpClientErrorToString(HttpClientError error) {
     switch (error) {
-        case CONNECTION_FAILED:
-            return "Failed to initiate connection";
-        case HEADER_PARSE_FAILED:
-            return "Failed to parse response headers";
-        case CONNECTION_CLOSED:
-            return "Connection closed before headers received";
-        case REQUEST_TIMEOUT:
-            return "Request timeout";
-        case HTTPS_NOT_SUPPORTED:
-            return "HTTPS not implemented";
-        case CHUNKED_DECODE_FAILED:
-            return "Failed to decode chunked body";
-        case CONNECT_TIMEOUT:
-            return "Connect timeout";
-        case BODY_STREAM_READ_FAILED:
-            return "Body stream read failed";
-        case ABORTED:
-            return "Aborted by user";
-        case CONNECTION_CLOSED_MID_BODY:
-            return "Connection closed mid-body";
-        default:
-            return "Network error";
+    case CONNECTION_FAILED:
+        return "Failed to initiate connection";
+    case HEADER_PARSE_FAILED:
+        return "Failed to parse response headers";
+    case CONNECTION_CLOSED:
+        return "Connection closed before headers received";
+    case REQUEST_TIMEOUT:
+        return "Request timeout";
+    case HTTPS_NOT_SUPPORTED:
+        return "HTTPS not implemented";
+    case CHUNKED_DECODE_FAILED:
+        return "Failed to decode chunked body";
+    case CONNECT_TIMEOUT:
+        return "Connect timeout";
+    case BODY_STREAM_READ_FAILED:
+        return "Body stream read failed";
+    case ABORTED:
+        return "Aborted by user";
+    case CONNECTION_CLOSED_MID_BODY:
+        return "Connection closed mid-body";
+    default:
+        return "Network error";
     }
 }
 
