@@ -4,3 +4,4 @@ test/
 *.log
 .vscode/
 .vscode/extensions.json
+.github/copilot-instructions.md

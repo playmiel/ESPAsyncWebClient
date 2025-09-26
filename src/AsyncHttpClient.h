@@ -123,7 +123,10 @@ private:
     void triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage);
     void tryDequeue();
     void sendStreamData(RequestContext* context);
+public:
+    // Exposé publiquement pour les tests et l'usage interne avancé
     static bool parseChunkSizeLine(const String& line, uint32_t* outSize);
+private:
 };
 
 #endif // ASYNC_HTTP_CLIENT_H

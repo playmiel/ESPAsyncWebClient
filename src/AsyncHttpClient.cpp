@@ -2,6 +2,8 @@
 
 #include "AsyncHttpClient.h"
 #include <algorithm>
+#include <cstdlib>
+#include <cerrno>
 
 AsyncHttpClient::AsyncHttpClient()
     : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.2"), _bodyChunkCallback(nullptr) {}
@@ -161,15 +163,21 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                 // Final chunk: mark complete and purge any (optional) trailer headers.
                 context->chunkedComplete = true;
                 // Trailer section ends with an empty line (CRLF CRLF). We already consumed size line.
+                bool trailersEnded = false;
                 while (true) {
                     int lineEnd2 = context->responseBuffer.indexOf("\r\n");
                     if (lineEnd2 == -1) break; // incomplete, wait for more
                     if (lineEnd2 == 0) { // empty line => end of trailers
                         context->responseBuffer.remove(0, 2);
+                        trailersEnded = true;
                         break;
                     }
                     // discard this trailer line
                     context->responseBuffer.remove(0, lineEnd2 + 2);
+                }
+                // Après le chunk final et la fin des trailers, vider le buffer par propreté.
+                if (trailersEnded) {
+                    context->responseBuffer = "";
                 }
                 break;
             }
@@ -205,10 +213,13 @@ bool AsyncHttpClient::parseChunkSizeLine(const String& line, uint32_t* outSize) 
     sizePart.trim();
     const char* cstr = sizePart.c_str();
     char* endptr = nullptr;
+    errno = 0;
     unsigned long val = strtoul(cstr, &endptr, 16);
-    if (endptr == nullptr || endptr == cstr) return false; // no conversion
-    // Allow optional chunk extensions (ignored). Ensure remaining chars (before ';') consumed.
-    if (*endptr != '\0') return false; // unexpected trailing chars before extension separator
+    if (cstr[0] == '\0') return false; // empty after trim
+    if (endptr == cstr) return false;   // no digits parsed
+    if (errno == ERANGE) return false;  // overflow
+    // Must have consumed all hex digits; any leftover (excluding chunk extensions already removed) is invalid
+    if (*endptr != '\0') return false;
     *outSize = (uint32_t)val;
     return true;
 }
@@ -217,25 +228,30 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
     if (context->responseProcessed) return;
     if (!context->headersComplete) { triggerError(context, CONNECTION_CLOSED, "Connection closed before headers received"); return; }
     // Headers parsed: determine if body complete.
-    bool complete = false;
-    if (context->chunked) {
-        complete = context->chunkedComplete; // final zero-size chunk seen
-    } else if (context->expectedContentLength > 0) {
-        complete = (context->receivedContentLength >= context->expectedContentLength);
-    } else {
-        // No Content-Length: closure defines completion
-        complete = true;
-    }
-    if (!complete) {
-        triggerError(context, CONNECTION_CLOSED, "Connection closed mid-body");
+    if (context->chunked && !context->chunkedComplete) {
+        // Connexion fermée avant réception du chunk final
+        triggerError(context, CHUNKED_DECODE_FAILED, "Failed to decode chunked body");
         return;
     }
+    if (!context->chunked && context->expectedContentLength > 0 && context->receivedContentLength < context->expectedContentLength) {
+        // Corps tronqué
+        triggerError(context, CONNECTION_CLOSED, "Truncated response");
+        return;
+    }
+    // Sinon succès: soit Content-Length atteint, soit pas de Content-Length et la fermeture marque la fin
     processResponse(context);
 }
 
 void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, int8_t error) {
     if (context->responseProcessed) return;
-    triggerError(context, static_cast<HttpClientError>(error), "Network error");
+    // Clamp external AsyncTCP error (int8_t) into our negative range without colliding with defined enums
+    // AsyncClient error codes are typically small negatives, but ensure we only map to known ones; else generic.
+    HttpClientError mapped = CONNECTION_FAILED; // default generic mapping
+    switch (error) {
+        case -1: mapped = CONNECTION_FAILED; break;
+        default: mapped = CONNECTION_FAILED; break; // future: map more precisely if AsyncTCP exposes constants
+    }
+    triggerError(context, mapped, "Network error");
 }
 
 bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String& headerData) {
@@ -265,7 +281,18 @@ void AsyncHttpClient::processResponse(RequestContext* context) {
 }
 
 void AsyncHttpClient::cleanup(RequestContext* context) {
-    if (context->client) { context->client->close(); delete context->client; }
+    if (context->client) {
+        // Détacher les callbacks pour éviter toute invocation tardive
+        context->client->onConnect(nullptr);
+        context->client->onData(nullptr);
+        context->client->onDisconnect(nullptr);
+        context->client->onError(nullptr);
+#if ASYNC_TCP_HAS_TIMEOUT
+        context->client->onTimeout(nullptr);
+#endif
+        context->client->close();
+        delete context->client;
+    }
     if (context->request) delete context->request;
     if (context->response) delete context->response;
     auto it = std::find(_activeRequests.begin(), _activeRequests.end(), context); if (it != _activeRequests.end()) _activeRequests.erase(it);

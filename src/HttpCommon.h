@@ -25,7 +25,8 @@ enum HttpClientError {
     CHUNKED_DECODE_FAILED = -6,
     CONNECT_TIMEOUT = -7,
     BODY_STREAM_READ_FAILED = -8,
-    ABORTED = -9
+    ABORTED = -9,
+    CONNECTION_CLOSED_MID_BODY = -10 // new explicit code to disambiguate body truncation
 };
 
 inline const char* httpClientErrorToString(HttpClientError error) {
@@ -48,6 +49,8 @@ inline const char* httpClientErrorToString(HttpClientError error) {
             return "Body stream read failed";
         case ABORTED:
             return "Aborted by user";
+        case CONNECTION_CLOSED_MID_BODY:
+            return "Connection closed mid-body";
         default:
             return "Network error";
     }
