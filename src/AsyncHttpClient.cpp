@@ -175,7 +175,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                     // discard this trailer line
                     context->responseBuffer.remove(0, lineEnd2 + 2);
                 }
-                // Après le chunk final et la fin des trailers, vider le buffer par propreté.
+                // After the final chunk and end of trailers, clear the buffer for cleanliness.
                 if (trailersEnded) {
                     context->responseBuffer = "";
                 }
