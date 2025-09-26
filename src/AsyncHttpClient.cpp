@@ -234,7 +234,7 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
         return;
     }
     if (!context->chunked && context->expectedContentLength > 0 && context->receivedContentLength < context->expectedContentLength) {
-        // Corps tronqué
+        // Body truncated
         triggerError(context, CONNECTION_CLOSED, "Truncated response");
         return;
     }
