@@ -59,7 +59,8 @@ void setup() {
   req->setHeader("Content-Type", "text/plain");
   req->setBasicAuth("user", "pass");
   req->enableGzipAcceptEncoding(); // server may or may not gzip response
-  req->setResponseChunkCallback([](const char* data, size_t len, bool final){
+  // Set global response chunk callback instead of per-request
+  client.onBodyChunk([](const char* data, size_t len, bool final){
     if (data && len) Serial.printf("[CHUNK %u bytes]\n", (unsigned)len);
     if (final) Serial.println("[CHUNKS COMPLETE]");
   });
