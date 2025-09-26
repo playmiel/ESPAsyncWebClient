@@ -238,7 +238,7 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
         triggerError(context, CONNECTION_CLOSED, "Truncated response");
         return;
     }
-    // Sinon succès: soit Content-Length atteint, soit pas de Content-Length et la fermeture marque la fin
+    // Otherwise success: either Content-Length reached, or no Content-Length and closure marks the end
     processResponse(context);
 }
 
