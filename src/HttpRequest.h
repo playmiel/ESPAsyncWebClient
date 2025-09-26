@@ -67,7 +67,7 @@ public:
     // Accept-Encoding convenience (gzip)
     void enableGzipAcceptEncoding(bool enable=true);
 
-    // Avoid storing body in memory (use only streaming callbacks). Effective only if a response chunk callback (per-request ou global) est présent.
+    // Avoid storing body in memory (use only streaming callbacks). Effective only if a response chunk callback (per-request or global) is present.
     void setNoStoreBody(bool enable=true) { _noStoreBody = enable; }
     bool getNoStoreBody() const { return _noStoreBody; }
 
