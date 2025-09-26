@@ -2,9 +2,9 @@ name: Lint & Static Analysis
 
 on:
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, dev ]
   push:
-    branches: [ main, develop ]
+    branches: [ main, dev ]
 
 jobs:
   clang-format:
