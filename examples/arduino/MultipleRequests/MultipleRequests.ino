@@ -9,7 +9,8 @@ int responseCount = 0;
 void onResponse(AsyncHttpResponse* response, const String& requestName) {
     responseCount++;
     Serial.printf("[%s] Response %d received!\n", requestName.c_str(), responseCount);
-    Serial.printf("[%s] Status: %d %s\n", requestName.c_str(), response->getStatusCode(), response->getStatusText().c_str());
+    Serial.printf("[%s] Status: %d %s\n", requestName.c_str(), response->getStatusCode(),
+                  response->getStatusText().c_str());
 }
 
 void onError(HttpClientError error, const char* message, const String& requestName) {
@@ -41,7 +42,7 @@ void setup() {
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
     // ESP32 fallback mode: the library auto-ticks timeouts via a FreeRTOS task.
-        // Call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // Call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
     // client.loop();
 #endif
 }

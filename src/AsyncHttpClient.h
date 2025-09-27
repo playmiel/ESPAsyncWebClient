@@ -89,9 +89,9 @@ class AsyncHttpClient {
     void loop(); // manual timeout / queue progression
 
   private:
-        // Lightweight locking helpers (no-op unless ESP32 auto-loop task is enabled)
-        void lock();
-        void unlock();
+    // Lightweight locking helpers (no-op unless ESP32 auto-loop task is enabled)
+    void lock();
+    void unlock();
 
     // Internal auto-loop task for fallback timeout mode (ESP32 only)
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
@@ -144,7 +144,7 @@ class AsyncHttpClient {
     std::vector<RequestContext*> _activeRequests;
     std::vector<RequestContext*> _pendingQueue;
     uint32_t _defaultConnectTimeout = 5000;
-    
+
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
 #endif

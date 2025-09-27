@@ -6,22 +6,21 @@
 #include <cerrno>
 
 AsyncHttpClient::AsyncHttpClient()
-    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.3"), _bodyChunkCallback(nullptr)
-{
+        : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
+            _bodyChunkCallback(nullptr) {
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     // Create recursive mutex for shared containers when auto-loop may run in background
     _reqMutex = xSemaphoreCreateRecursiveMutex();
 #endif
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     // Optional: spawn a lightweight auto-loop task so users don't need to call client.loop() manually.
-    xTaskCreatePinnedToCore(
-        _autoLoopTaskThunk,        // task entry
-        "AsyncHttpAutoLoop",      // name
-        2048,                      // stack words
-        this,                      // parameter
-        1,                         // priority (low)
-        &_autoLoopTaskHandle,      // handle out
-        tskNO_AFFINITY             // any core
+    xTaskCreatePinnedToCore(_autoLoopTaskThunk,   // task entry
+                            "AsyncHttpAutoLoop",  // name
+                            2048,                 // stack words
+                            this,                 // parameter
+                            1,                    // priority (low)
+                            &_autoLoopTaskHandle, // handle out
+                            tskNO_AFFINITY        // any core
     );
 #endif
 }
@@ -44,10 +43,12 @@ AsyncHttpClient::~AsyncHttpClient() {
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
 void AsyncHttpClient::lock() {
-    if (_reqMutex) xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
+    if (_reqMutex)
+        xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
 }
 void AsyncHttpClient::unlock() {
-    if (_reqMutex) xSemaphoreGiveRecursive(_reqMutex);
+    if (_reqMutex)
+        xSemaphoreGiveRecursive(_reqMutex);
 }
 #else
 void AsyncHttpClient::lock() {}
@@ -59,7 +60,8 @@ void AsyncHttpClient::_autoLoopTaskThunk(void* param) {
     AsyncHttpClient* self = static_cast<AsyncHttpClient*>(param);
     const TickType_t delayTicks = pdMS_TO_TICKS(20); // ~50 Hz tick
     while (true) {
-        if (self) self->loop();
+        if (self)
+            self->loop();
         vTaskDelay(delayTicks);
     }
 }
