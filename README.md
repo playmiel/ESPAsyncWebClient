@@ -74,20 +74,24 @@ void setup() {
 
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
-    // With older AsyncTCP (no native timeout), the library now auto-ticks via a FreeRTOS task on ESP32.
-    // You generally don't need to call client.loop() yourself anymore.
-    // Call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // If your AsyncTCP does NOT provide native timeouts, you must drive timeouts manually
+    // unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // Either:
+    //   - Define ASYNC_HTTP_ENABLE_AUTOLOOP (ESP32): a tiny FreeRTOS task will call client.loop() for you; or
+    //   - Call client.loop() periodically here yourself (recommended every ~10-20ms when busy).
     // client.loop();
 #endif
 }
 ```
 
-On ESP32, when AsyncTCP lacks native timeout support, the library automatically creates a tiny FreeRTOS task
-that drives internal timeouts. To avoid concurrency or if you prefer manual control, do NOT define the macro
-`ASYNC_HTTP_ENABLE_AUTOLOOP` and call `client.loop()` periodically in your sketch's loop(). If you do define
-`-DASYNC_HTTP_ENABLE_AUTOLOOP` (ESP32 only), the library creates a background FreeRTOS task that calls
-`client.loop()` for you.
-call `client.loop()` periodically yourself.
+On ESP32, if AsyncTCP lacks native timeout support, you have two options:
+
+- Define `-DASYNC_HTTP_ENABLE_AUTOLOOP`: the library creates a tiny FreeRTOS task that periodically calls
+    `client.loop()` in the background. This is convenient but introduces a background task; keep callbacks short.
+- Do not define it: call `client.loop()` periodically yourself from your sketch `loop()` to drive timeouts.
+
+If `ASYNC_TCP_HAS_TIMEOUT` is available in your AsyncTCP, neither is required for timeouts, but calling
+`client.loop()` remains harmless.
 
 ## API Reference
 

@@ -83,7 +83,10 @@ class AsyncHttpClient {
 
     // Global streaming body callback (applies for all responses unless overridden per-request in future)
     void onBodyChunk(BodyChunkCallback cb) {
+        // Protect against concurrent auto-loop task updates
+        lock();
         _bodyChunkCallback = cb;
+        unlock();
     }
 
     void loop(); // manual timeout / queue progression

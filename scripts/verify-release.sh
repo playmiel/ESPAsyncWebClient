@@ -10,7 +10,8 @@ pass() { echo "[OK] $1"; }
 if [[ ! -f library.json ]]; then fail "library.json missing"; fi
 if [[ ! -f library.properties ]]; then fail "library.properties missing"; fi
 
-VERSION_JSON=$(grep '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+# Extract the first occurrence of a JSON key named "version" (top-level package version)
+VERSION_JSON=$(grep -m1 '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
 VERSION_PROP=$(grep '^version=' library.properties | cut -d'=' -f2)
 
 [[ -n "${VERSION_JSON}" ]] || fail "Could not extract version from library.json"
@@ -41,10 +42,20 @@ else
 fi
 
 # 4. User-Agent strings reflect current version
+# Accept either a literal "ESPAsyncWebClient/<version>" or a build that concatenates
+# the macro ESP_ASYNC_WEB_CLIENT_VERSION (e.g., String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION).
 UA_MISMATCH=0
 while IFS= read -r line; do
-  if [[ "$line" =~ ESPAsyncWebClient/ && ! "$line" =~ ESPAsyncWebClient/${VERSION_JSON} ]]; then
-    echo "Found outdated User-Agent line: $line" >&2
+  if [[ "$line" =~ ESPAsyncWebClient/ ]]; then
+    if [[ "$line" =~ ESP_ASYNC_WEB_CLIENT_VERSION ]]; then
+      # UA is constructed using the version macro: valid
+      continue
+    fi
+    if [[ "$line" =~ ESPAsyncWebClient/${VERSION_JSON} ]]; then
+      # UA contains the exact literal: valid
+      continue
+    fi
+    echo "Found outdated or ambiguous User-Agent line: $line" >&2
     UA_MISMATCH=1
   fi
 done < <(grep -R "ESPAsyncWebClient/" -n src || true)
@@ -52,7 +63,7 @@ done < <(grep -R "ESPAsyncWebClient/" -n src || true)
 if [[ $UA_MISMATCH -ne 0 ]]; then
   fail "Outdated User-Agent strings detected"
 else
-  pass "User-Agent strings up to date (${VERSION_JSON})"
+  pass "User-Agent strings up to date (${VERSION_JSON}) or using version macro"
 fi
 
 # 5. No stale previous version literal (basic check for immediate prior released version)

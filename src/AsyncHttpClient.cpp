@@ -88,29 +88,44 @@ uint32_t AsyncHttpClient::patch(const char* url, const char* data, SuccessCallba
 
 void AsyncHttpClient::setHeader(const char* name, const char* value) {
     String nameStr(name), valueStr(value);
+    lock();
     for (auto& h : _defaultHeaders) {
         if (h.name.equalsIgnoreCase(nameStr)) {
             h.value = valueStr;
+            unlock();
             return;
         }
     }
     _defaultHeaders.push_back(HttpHeader(nameStr, valueStr));
+    unlock();
 }
 
 void AsyncHttpClient::setTimeout(uint32_t timeout) {
     _defaultTimeout = timeout;
 }
 void AsyncHttpClient::setUserAgent(const char* userAgent) {
+    lock();
     _defaultUserAgent = String(userAgent);
+    unlock();
 }
 
 uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
                                       ErrorCallback onError) {
+    // Snapshot global defaults under lock to avoid concurrent modification issues
+    std::vector<HttpHeader> headersCopy;
+    String uaCopy;
+    uint32_t timeoutCopy;
+    lock();
+    headersCopy = _defaultHeaders; // copy
+    uaCopy = _defaultUserAgent;    // copy
+    timeoutCopy = _defaultTimeout; // copy
+    unlock();
+
     AsyncHttpRequest* request = new AsyncHttpRequest(method, String(url));
-    for (const auto& h : _defaultHeaders)
+    for (const auto& h : headersCopy)
         request->setHeader(h.name, h.value);
-    request->setUserAgent(_defaultUserAgent);
-    request->setTimeout(_defaultTimeout);
+    request->setUserAgent(uaCopy);
+    request->setTimeout(timeoutCopy);
     if (data) {
         request->setBody(String(data));
         request->setHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -233,8 +248,10 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                             context->response->appendBody(bodyData.c_str(), bodyData.length());
                         }
                         context->receivedContentLength += bodyData.length();
-                        if (_bodyChunkCallback)
-                            _bodyChunkCallback(bodyData.c_str(), bodyData.length(), false);
+                        // snapshot callback to avoid race if user modifies it concurrently
+                        auto cb = _bodyChunkCallback;
+                        if (cb)
+                            cb(bodyData.c_str(), bodyData.length(), false);
                         context->responseBuffer = "";
                     }
                 } else
@@ -249,8 +266,9 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             context->response->appendBody(data, len);
         }
         context->receivedContentLength += len;
-        if (_bodyChunkCallback)
-            _bodyChunkCallback(data, len, false);
+        auto cb2 = _bodyChunkCallback;
+        if (cb2)
+            cb2(data, len, false);
     }
 
     while (context->headersComplete && context->chunked && !context->chunkedComplete) {
@@ -298,8 +316,9 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             context->response->appendBody(chunkData.c_str(), chunkData.length());
         }
         context->receivedContentLength += chunkData.length();
-        if (_bodyChunkCallback)
-            _bodyChunkCallback(chunkData.c_str(), chunkData.length(), false);
+        auto cb3 = _bodyChunkCallback;
+        if (cb3)
+            cb3(chunkData.c_str(), chunkData.length(), false);
         context->responseBuffer.remove(0, context->currentChunkRemaining + 2);
         context->currentChunkRemaining = 0;
     }
@@ -312,8 +331,9 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                  context->receivedContentLength >= context->expectedContentLength)
             complete = true;
         if (complete) {
-            if (_bodyChunkCallback)
-                _bodyChunkCallback(nullptr, 0, true);
+            auto cb4 = _bodyChunkCallback;
+            if (cb4)
+                cb4(nullptr, 0, true);
             processResponse(context);
         }
     }
