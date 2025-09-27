@@ -97,7 +97,9 @@ void testHttpMethodsCompilation() {
 }
 
 void loop() {
-    // Timeouts: call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // Timeouts: If your AsyncTCP build doesn't provide native timeouts and you didn't enable auto-loop
+    // (-DASYNC_HTTP_ENABLE_AUTOLOOP, ESP32 only), you must call client.loop() periodically to enforce
+    // request timeouts. Uncomment the block below to enable timeouts when running on hardware:
     // #if !ASYNC_TCP_HAS_TIMEOUT
     // client.loop();
     // #endif
