@@ -6,8 +6,8 @@
 #include <cerrno>
 
 AsyncHttpClient::AsyncHttpClient()
-        : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
-            _bodyChunkCallback(nullptr) {
+    : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
+      _bodyChunkCallback(nullptr) {
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     // Create recursive mutex for shared containers when auto-loop may run in background
     _reqMutex = xSemaphoreCreateRecursiveMutex();
