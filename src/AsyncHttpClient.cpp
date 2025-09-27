@@ -6,9 +6,66 @@
 #include <cerrno>
 
 AsyncHttpClient::AsyncHttpClient()
-    : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.2"), _bodyChunkCallback(nullptr) {}
+    : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
+      _bodyChunkCallback(nullptr) {
+#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    // Create recursive mutex for shared containers when auto-loop may run in background
+    _reqMutex = xSemaphoreCreateRecursiveMutex();
+#endif
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    // Optional: spawn a lightweight auto-loop task so users don't need to call client.loop() manually.
+    xTaskCreatePinnedToCore(_autoLoopTaskThunk,   // task entry
+                            "AsyncHttpAutoLoop",  // name
+                            2048,                 // stack words
+                            this,                 // parameter
+                            1,                    // priority (low)
+                            &_autoLoopTaskHandle, // handle out
+                            tskNO_AFFINITY        // any core
+    );
+#endif
+}
 
-AsyncHttpClient::~AsyncHttpClient() {}
+AsyncHttpClient::~AsyncHttpClient() {
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    if (_autoLoopTaskHandle) {
+        TaskHandle_t h = _autoLoopTaskHandle;
+        _autoLoopTaskHandle = nullptr;
+        vTaskDelete(h);
+    }
+#endif
+#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    if (_reqMutex) {
+        vSemaphoreDelete(_reqMutex);
+        _reqMutex = nullptr;
+    }
+#endif
+}
+
+#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+void AsyncHttpClient::lock() {
+    if (_reqMutex)
+        xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
+}
+void AsyncHttpClient::unlock() {
+    if (_reqMutex)
+        xSemaphoreGiveRecursive(_reqMutex);
+}
+#else
+void AsyncHttpClient::lock() {}
+void AsyncHttpClient::unlock() {}
+#endif
+
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+void AsyncHttpClient::_autoLoopTaskThunk(void* param) {
+    AsyncHttpClient* self = static_cast<AsyncHttpClient*>(param);
+    const TickType_t delayTicks = pdMS_TO_TICKS(20); // ~50 Hz tick
+    while (true) {
+        if (self)
+            self->loop();
+        vTaskDelay(delayTicks);
+    }
+}
+#endif
 
 uint32_t AsyncHttpClient::get(const char* url, SuccessCallback onSuccess, ErrorCallback onError) {
     return makeRequest(HTTP_GET, url, nullptr, onSuccess, onError);
@@ -31,29 +88,44 @@ uint32_t AsyncHttpClient::patch(const char* url, const char* data, SuccessCallba
 
 void AsyncHttpClient::setHeader(const char* name, const char* value) {
     String nameStr(name), valueStr(value);
+    lock();
     for (auto& h : _defaultHeaders) {
         if (h.name.equalsIgnoreCase(nameStr)) {
             h.value = valueStr;
+            unlock();
             return;
         }
     }
     _defaultHeaders.push_back(HttpHeader(nameStr, valueStr));
+    unlock();
 }
 
 void AsyncHttpClient::setTimeout(uint32_t timeout) {
     _defaultTimeout = timeout;
 }
 void AsyncHttpClient::setUserAgent(const char* userAgent) {
+    lock();
     _defaultUserAgent = String(userAgent);
+    unlock();
 }
 
 uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
                                       ErrorCallback onError) {
+    // Snapshot global defaults under lock to avoid concurrent modification issues
+    std::vector<HttpHeader> headersCopy;
+    String uaCopy;
+    uint32_t timeoutCopy;
+    lock();
+    headersCopy = _defaultHeaders; // copy
+    uaCopy = _defaultUserAgent;    // copy
+    timeoutCopy = _defaultTimeout; // copy
+    unlock();
+
     AsyncHttpRequest* request = new AsyncHttpRequest(method, String(url));
-    for (const auto& h : _defaultHeaders)
+    for (const auto& h : headersCopy)
         request->setHeader(h.name, h.value);
-    request->setUserAgent(_defaultUserAgent);
-    request->setTimeout(_defaultTimeout);
+    request->setUserAgent(uaCopy);
+    request->setTimeout(timeoutCopy);
     if (data) {
         request->setBody(String(data));
         request->setHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -83,9 +155,11 @@ uint32_t AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onS
 
 bool AsyncHttpClient::abort(uint32_t requestId) {
     // Active requests: we must be careful as triggerError() will cleanup and erase from _activeRequests
+    lock();
     for (size_t i = 0; i < _activeRequests.size(); ++i) {
         RequestContext* ctx = _activeRequests[i];
         if (ctx->id == requestId && !ctx->responseProcessed) {
+            unlock();
             triggerError(ctx, ABORTED, "Aborted by user");
             return true;
         }
@@ -95,25 +169,32 @@ bool AsyncHttpClient::abort(uint32_t requestId) {
         if ((*it)->id == requestId) {
             RequestContext* ctx = *it;
             _pendingQueue.erase(it);
+            unlock();
             triggerError(ctx, ABORTED, "Aborted by user");
             return true;
         }
     }
+    unlock();
     return false;
 }
 
 void AsyncHttpClient::executeOrQueue(RequestContext* context) {
+    lock();
     if (_maxParallel > 0 && _activeRequests.size() >= _maxParallel) {
         _pendingQueue.push_back(context);
+        unlock();
         return;
     }
+    unlock();
     executeRequest(context);
 }
 
 void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->client = new AsyncClient();
     context->connectStartMs = millis();
+    lock();
     _activeRequests.push_back(context);
+    unlock();
 
     context->client->onConnect([this, context](void* arg, AsyncClient* c) { handleConnect(context, c); });
     context->client->onData(
@@ -167,8 +248,10 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                             context->response->appendBody(bodyData.c_str(), bodyData.length());
                         }
                         context->receivedContentLength += bodyData.length();
-                        if (_bodyChunkCallback)
-                            _bodyChunkCallback(bodyData.c_str(), bodyData.length(), false);
+                        // snapshot callback to avoid race if user modifies it concurrently
+                        auto cb = _bodyChunkCallback;
+                        if (cb)
+                            cb(bodyData.c_str(), bodyData.length(), false);
                         context->responseBuffer = "";
                     }
                 } else
@@ -183,8 +266,9 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             context->response->appendBody(data, len);
         }
         context->receivedContentLength += len;
-        if (_bodyChunkCallback)
-            _bodyChunkCallback(data, len, false);
+        auto cb2 = _bodyChunkCallback;
+        if (cb2)
+            cb2(data, len, false);
     }
 
     while (context->headersComplete && context->chunked && !context->chunkedComplete) {
@@ -232,8 +316,9 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             context->response->appendBody(chunkData.c_str(), chunkData.length());
         }
         context->receivedContentLength += chunkData.length();
-        if (_bodyChunkCallback)
-            _bodyChunkCallback(chunkData.c_str(), chunkData.length(), false);
+        auto cb3 = _bodyChunkCallback;
+        if (cb3)
+            cb3(chunkData.c_str(), chunkData.length(), false);
         context->responseBuffer.remove(0, context->currentChunkRemaining + 2);
         context->currentChunkRemaining = 0;
     }
@@ -246,8 +331,9 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                  context->receivedContentLength >= context->expectedContentLength)
             complete = true;
         if (complete) {
-            if (_bodyChunkCallback)
-                _bodyChunkCallback(nullptr, 0, true);
+            auto cb4 = _bodyChunkCallback;
+            if (cb4)
+                cb4(nullptr, 0, true);
             processResponse(context);
         }
     }
@@ -295,7 +381,7 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
     if (!context->chunked && context->expectedContentLength > 0 &&
         context->receivedContentLength < context->expectedContentLength) {
         // Body truncated
-        triggerError(context, CONNECTION_CLOSED, "Truncated response");
+        triggerError(context, CONNECTION_CLOSED_MID_BODY, "Truncated response");
         return;
     }
     // Otherwise success: either Content-Length reached, or no Content-Length and closure marks the end
@@ -382,9 +468,11 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
         delete context->request;
     if (context->response)
         delete context->response;
+    lock();
     auto it = std::find(_activeRequests.begin(), _activeRequests.end(), context);
     if (it != _activeRequests.end())
         _activeRequests.erase(it);
+    unlock();
     delete context;
     tryDequeue();
 }
@@ -401,33 +489,47 @@ void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError erro
 void AsyncHttpClient::loop() {
     uint32_t now = millis();
     // Iterate safely even if callbacks remove entries: use index loop.
+    lock();
     for (size_t i = 0; i < _activeRequests.size();) {
         RequestContext* ctx = _activeRequests[i];
 #if !ASYNC_TCP_HAS_TIMEOUT
         if (!ctx->responseProcessed && (now - ctx->timeoutTimer) >= ctx->request->getTimeout()) {
+            unlock();
             triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
+            lock();
         }
 #endif
         if (!ctx->responseProcessed && ctx->client && !ctx->headersSent && ctx->connectTimeoutMs > 0 &&
             (now - ctx->connectStartMs) > ctx->connectTimeoutMs) {
+            unlock();
             triggerError(ctx, CONNECT_TIMEOUT, "Connect timeout");
+            lock();
         }
-        if (!ctx->responseProcessed && ctx->streamingBodyInProgress && ctx->request->hasBodyStream())
+        if (!ctx->responseProcessed && ctx->streamingBodyInProgress && ctx->request->hasBodyStream()) {
+            unlock();
             sendStreamData(ctx);
+            lock();
+        }
         // If triggerError/processResponse cleaned up ctx, current index now holds a different pointer.
         if (i < _activeRequests.size() && _activeRequests[i] == ctx) {
             ++i; // still present, advance
         }
         // else do not advance: current i now refers to next element after erase
     }
+    unlock();
 }
 
 void AsyncHttpClient::tryDequeue() {
-    while (_maxParallel == 0 || _activeRequests.size() < _maxParallel) {
-        if (_pendingQueue.empty())
+    while (true) {
+        lock();
+        bool canStart = (_maxParallel == 0 || _activeRequests.size() < _maxParallel);
+        if (!canStart || _pendingQueue.empty()) {
+            unlock();
             break;
+        }
         RequestContext* ctx = _pendingQueue.front();
         _pendingQueue.erase(_pendingQueue.begin());
+        unlock();
         executeRequest(ctx);
     }
 }

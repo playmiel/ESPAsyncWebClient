@@ -1,6 +1,6 @@
 {
   "name": "ESPAsyncWebClient",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Asynchronous HTTP client library for ESP32 ",
   "keywords": [
     "http",
@@ -25,6 +25,8 @@
   "dependencies": [
     {
       "name": "AsyncTCP",
+      "owner": "ESP32Async",
+      "version": "^3.4.8",
       "platforms": ["espressif32"]
     }
   ],

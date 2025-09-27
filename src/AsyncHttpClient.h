@@ -11,6 +11,11 @@
 #include "HttpResponse.h"
 #include "HttpCommon.h"
 #include <AsyncTCP.h>
+#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/semphr.h>
+#endif
 
 class AsyncHttpClient {
   public:
@@ -78,12 +83,25 @@ class AsyncHttpClient {
 
     // Global streaming body callback (applies for all responses unless overridden per-request in future)
     void onBodyChunk(BodyChunkCallback cb) {
+        // Protect against concurrent auto-loop task updates
+        lock();
         _bodyChunkCallback = cb;
+        unlock();
     }
 
     void loop(); // manual timeout / queue progression
 
   private:
+    // Lightweight locking helpers (no-op unless ESP32 auto-loop task is enabled)
+    void lock();
+    void unlock();
+
+    // Internal auto-loop task for fallback timeout mode (ESP32 only)
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    static void _autoLoopTaskThunk(void* param);
+    TaskHandle_t _autoLoopTaskHandle = nullptr;
+#endif
+
     struct RequestContext {
         AsyncHttpRequest* request;
         AsyncHttpResponse* response;
@@ -129,6 +147,10 @@ class AsyncHttpClient {
     std::vector<RequestContext*> _activeRequests;
     std::vector<RequestContext*> _pendingQueue;
     uint32_t _defaultConnectTimeout = 5000;
+
+#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
+#endif
 
     // Internal methods
     uint32_t makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,

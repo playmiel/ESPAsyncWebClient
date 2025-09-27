@@ -9,6 +9,11 @@
     0 // 0 = only set Accept-Encoding header (no inflation). 1 = future: enable minimal gzip inflate.
 #endif
 
+// Library version (single source of truth inside code). Keep in sync with library.json and library.properties.
+#ifndef ESP_ASYNC_WEB_CLIENT_VERSION
+#define ESP_ASYNC_WEB_CLIENT_VERSION "1.0.3"
+#endif
+
 struct HttpHeader {
     String name;
     String value;
@@ -17,6 +22,7 @@ struct HttpHeader {
     HttpHeader(const String& n, const String& v) : name(n), value(v) {}
 };
 
+// Keep README.md "Error Codes" table in sync with this enum.
 enum HttpClientError {
     CONNECTION_FAILED = -1,
     HEADER_PARSE_FAILED = -2,

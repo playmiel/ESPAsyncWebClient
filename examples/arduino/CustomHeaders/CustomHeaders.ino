@@ -7,7 +7,6 @@ AsyncHttpClient client;
 void setup() {
     Serial.begin(115200);
 
-    // Connect to WiFi
     WiFi.begin("your-ssid", "your-password");
     while (WiFi.status() != WL_CONNECTED) {
         delay(1000);
@@ -15,13 +14,16 @@ void setup() {
     }
     Serial.println("Connected to WiFi");
 
-    // Make a simple GET request
+    client.setHeader("X-API-Key", "your-api-key-here");
+    client.setHeader("Authorization", "Bearer your-token-here");
+    client.setUserAgent("ESP32-CustomClient/1.0");
+    client.setTimeout(15000);
+
     client.get(
-        "http://httpbin.org/get",
+        "http://httpbin.org/headers",
         [](AsyncHttpResponse* response) {
-            Serial.println("Success!");
+            Serial.println("Request with custom headers successful!");
             Serial.printf("Status: %d\n", response->getStatusCode());
-            Serial.printf("Body: %s\n", response->getBody().c_str());
         },
         [](HttpClientError error, const char* message) {
             Serial.printf("Error: %s (%d)\n", httpClientErrorToString(error), (int)error);
@@ -30,7 +32,8 @@ void setup() {
 
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
+    // Timeouts: If your AsyncTCP build doesn't provide native timeouts and you didn't enable auto-loop
+    // (-DASYNC_HTTP_ENABLE_AUTOLOOP, ESP32 only), call client.loop() periodically to enforce request timeouts.
     client.loop();
 #endif
-    delay(1000);
 }
