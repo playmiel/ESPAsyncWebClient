@@ -8,10 +8,12 @@
 AsyncHttpClient::AsyncHttpClient()
     : _defaultTimeout(10000), _defaultUserAgent("ESPAsyncWebClient/1.0.3"), _bodyChunkCallback(nullptr)
 {
-#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32)
-    // Spawn a lightweight auto-loop task so users don't need to call client.loop() manually.
-    // Can be disabled by defining ASYNC_HTTP_DISABLE_AUTOLOOP at compile time.
-    #ifndef ASYNC_HTTP_DISABLE_AUTOLOOP
+#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    // Create recursive mutex for shared containers when auto-loop may run in background
+    _reqMutex = xSemaphoreCreateRecursiveMutex();
+#endif
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    // Optional: spawn a lightweight auto-loop task so users don't need to call client.loop() manually.
     xTaskCreatePinnedToCore(
         _autoLoopTaskThunk,        // task entry
         "AsyncHttpAutoLoop",      // name
@@ -21,23 +23,38 @@ AsyncHttpClient::AsyncHttpClient()
         &_autoLoopTaskHandle,      // handle out
         tskNO_AFFINITY             // any core
     );
-    #endif
 #endif
 }
 
 AsyncHttpClient::~AsyncHttpClient() {
-#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32)
-    #ifndef ASYNC_HTTP_DISABLE_AUTOLOOP
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     if (_autoLoopTaskHandle) {
         TaskHandle_t h = _autoLoopTaskHandle;
         _autoLoopTaskHandle = nullptr;
         vTaskDelete(h);
     }
-    #endif
+#endif
+#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+    if (_reqMutex) {
+        vSemaphoreDelete(_reqMutex);
+        _reqMutex = nullptr;
+    }
 #endif
 }
 
-#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32)
+#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+void AsyncHttpClient::lock() {
+    if (_reqMutex) xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
+}
+void AsyncHttpClient::unlock() {
+    if (_reqMutex) xSemaphoreGiveRecursive(_reqMutex);
+}
+#else
+void AsyncHttpClient::lock() {}
+void AsyncHttpClient::unlock() {}
+#endif
+
+#if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
 void AsyncHttpClient::_autoLoopTaskThunk(void* param) {
     AsyncHttpClient* self = static_cast<AsyncHttpClient*>(param);
     const TickType_t delayTicks = pdMS_TO_TICKS(20); // ~50 Hz tick
@@ -121,9 +138,11 @@ uint32_t AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onS
 
 bool AsyncHttpClient::abort(uint32_t requestId) {
     // Active requests: we must be careful as triggerError() will cleanup and erase from _activeRequests
+    lock();
     for (size_t i = 0; i < _activeRequests.size(); ++i) {
         RequestContext* ctx = _activeRequests[i];
         if (ctx->id == requestId && !ctx->responseProcessed) {
+            unlock();
             triggerError(ctx, ABORTED, "Aborted by user");
             return true;
         }
@@ -133,25 +152,32 @@ bool AsyncHttpClient::abort(uint32_t requestId) {
         if ((*it)->id == requestId) {
             RequestContext* ctx = *it;
             _pendingQueue.erase(it);
+            unlock();
             triggerError(ctx, ABORTED, "Aborted by user");
             return true;
         }
     }
+    unlock();
     return false;
 }
 
 void AsyncHttpClient::executeOrQueue(RequestContext* context) {
+    lock();
     if (_maxParallel > 0 && _activeRequests.size() >= _maxParallel) {
         _pendingQueue.push_back(context);
+        unlock();
         return;
     }
+    unlock();
     executeRequest(context);
 }
 
 void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->client = new AsyncClient();
     context->connectStartMs = millis();
+    lock();
     _activeRequests.push_back(context);
+    unlock();
 
     context->client->onConnect([this, context](void* arg, AsyncClient* c) { handleConnect(context, c); });
     context->client->onData(
@@ -420,9 +446,11 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
         delete context->request;
     if (context->response)
         delete context->response;
+    lock();
     auto it = std::find(_activeRequests.begin(), _activeRequests.end(), context);
     if (it != _activeRequests.end())
         _activeRequests.erase(it);
+    unlock();
     delete context;
     tryDequeue();
 }
@@ -439,33 +467,47 @@ void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError erro
 void AsyncHttpClient::loop() {
     uint32_t now = millis();
     // Iterate safely even if callbacks remove entries: use index loop.
+    lock();
     for (size_t i = 0; i < _activeRequests.size();) {
         RequestContext* ctx = _activeRequests[i];
 #if !ASYNC_TCP_HAS_TIMEOUT
         if (!ctx->responseProcessed && (now - ctx->timeoutTimer) >= ctx->request->getTimeout()) {
+            unlock();
             triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
+            lock();
         }
 #endif
         if (!ctx->responseProcessed && ctx->client && !ctx->headersSent && ctx->connectTimeoutMs > 0 &&
             (now - ctx->connectStartMs) > ctx->connectTimeoutMs) {
+            unlock();
             triggerError(ctx, CONNECT_TIMEOUT, "Connect timeout");
+            lock();
         }
-        if (!ctx->responseProcessed && ctx->streamingBodyInProgress && ctx->request->hasBodyStream())
+        if (!ctx->responseProcessed && ctx->streamingBodyInProgress && ctx->request->hasBodyStream()) {
+            unlock();
             sendStreamData(ctx);
+            lock();
+        }
         // If triggerError/processResponse cleaned up ctx, current index now holds a different pointer.
         if (i < _activeRequests.size() && _activeRequests[i] == ctx) {
             ++i; // still present, advance
         }
         // else do not advance: current i now refers to next element after erase
     }
+    unlock();
 }
 
 void AsyncHttpClient::tryDequeue() {
-    while (_maxParallel == 0 || _activeRequests.size() < _maxParallel) {
-        if (_pendingQueue.empty())
+    while (true) {
+        lock();
+        bool canStart = (_maxParallel == 0 || _activeRequests.size() < _maxParallel);
+        if (!canStart || _pendingQueue.empty()) {
+            unlock();
             break;
+        }
         RequestContext* ctx = _pendingQueue.front();
         _pendingQueue.erase(_pendingQueue.begin());
+        unlock();
         executeRequest(ctx);
     }
 }

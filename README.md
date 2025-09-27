@@ -76,14 +76,17 @@ void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
     // With older AsyncTCP (no native timeout), the library now auto-ticks via a FreeRTOS task on ESP32.
     // You generally don't need to call client.loop() yourself anymore.
-    // If you define -DASYNC_HTTP_DISABLE_AUTOLOOP, then call client.loop() periodically here.
+    // Call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
     // client.loop();
 #endif
 }
 ```
 
 On ESP32, when AsyncTCP lacks native timeout support, the library automatically creates a tiny FreeRTOS task
-that drives internal timeouts. If you prefer manual control, build with `-DASYNC_HTTP_DISABLE_AUTOLOOP` and
+that drives internal timeouts. To avoid concurrency or if you prefer manual control, do NOT define the macro
+`ASYNC_HTTP_ENABLE_AUTOLOOP` and call `client.loop()` periodically in your sketch's loop(). If you do define
+`-DASYNC_HTTP_ENABLE_AUTOLOOP` (ESP32 only), the library creates a background FreeRTOS task that calls
+`client.loop()` for you.
 call `client.loop()` periodically yourself.
 
 ## API Reference
@@ -510,7 +513,7 @@ If you define `ASYNC_HTTP_LEGACY_VOID_API` (e.g. via build flags), the class exp
 
 ### Advanced Example
 
-See `examples/StreamingUpload/StreamingUpload.ino` for a streaming (no-copy) upload demonstrating:
+See Arduino sketch at `examples/arduino/StreamingUpload/StreamingUpload.ino` or the PlatformIO project at `examples/platformio/StreamingUpload/src/main.cpp` for a streaming (no-copy) upload demonstrating:
 
 - `setBodyStream()`
 - Basic Auth (`setBasicAuth`)
