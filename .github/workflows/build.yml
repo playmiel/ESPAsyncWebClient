@@ -12,7 +12,7 @@ jobs:
     
     strategy:
       matrix:
-        example: [SimpleGet, PostWithData, MultipleRequests, CustomHeaders, CompileTest]
+        example: [SimpleGet, PostWithData, MultipleRequests, CustomHeaders, StreamingUpload, CompileTest]
         platform: [esp32dev]
     
     steps:
@@ -31,7 +31,7 @@ jobs:
       with:
         path: |
           ~/.platformio/.cache
-        key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+        key: ${{ runner.os }}-pio-${{ hashFiles('examples/platformio/**/platformio.ini') }}
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -43,55 +43,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install --upgrade platformio
     
-    - name: Create temporary project for example
+    - name: Build PlatformIO example
       run: |
         example_name="${{ matrix.example }}"
-        test_dir="/tmp/test_${example_name}_${{ matrix.platform }}"
-
-        echo "Creating test project for ${example_name} on ${{ matrix.platform }}..."
-        mkdir -p "$test_dir/src"
-        mkdir -p "$test_dir/lib/ESPAsyncWebClient"
-
-        # Copy example as main source (rename .ino to .cpp)
-        cp "examples/${example_name}/${example_name}.ino" "$test_dir/src/main.cpp"
-
-        # Copy library source
-        cp -r src/* "$test_dir/lib/ESPAsyncWebClient/"
-
-        # Create platformio.ini specific for this test
-        cat > "$test_dir/platformio.ini" << 'EOF'
-        [platformio]
-        default_envs = test_env
-
-        [env:test_env]
-        platform = espressif32
-        board = esp32dev
-        framework = arduino
-        monitor_speed = 115200
-        build_flags =
-            -DCOMPILE_TEST_ONLY
-            -Wall
-        lib_deps =
-            https://github.com/ESP32Async/AsyncTCP.git
-            bblanchon/ArduinoJson@^6.21.0
-        EOF
-
-        echo "Created test structure:"
-        ls -la "$test_dir"
-        echo "platformio.ini content:"
-        cat "$test_dir/platformio.ini"
-    
-    - name: Build example
-      run: |
-        example_name="${{ matrix.example }}"
-        test_dir="/tmp/test_${example_name}_${{ matrix.platform }}"
-        cd "$test_dir"
-        
-        echo "Building ${example_name} for ${{ matrix.platform }}..."
-        echo "Source file:"
-        head -20 src/main.cpp
-        
-        pio run -v
+        ex_dir="examples/platformio/${example_name}"
+        echo "Building ${example_name} from ${ex_dir} for ${{ matrix.platform }}..."
+        test -f "${ex_dir}/platformio.ini" || (echo "platformio.ini missing in ${ex_dir}" && exit 1)
+        cd "${ex_dir}"
+        pio run -e ${{ matrix.platform }} -v
 
   syntax-check:
     runs-on: ubuntu-latest
@@ -180,16 +139,23 @@ jobs:
         test -f README.md || (echo "README.md missing" && exit 1)
         test -d src || (echo "src directory missing" && exit 1)
         test -d examples || (echo "examples directory missing" && exit 1)
-        
         # Check that main headers exist
         test -f src/ESPAsyncWebClient.h || (echo "Main header missing" && exit 1)
-        
-        # Check that examples compile structure is valid
-        for example in examples/*; do
-          if [ -d "$example" ]; then
-            example_name=$(basename "$example")
-            test -f "$example/$example_name.ino" || (echo "Example $example_name.ino missing" && exit 1)
-          fi
+
+        # Expected example names
+        expected=(SimpleGet PostWithData MultipleRequests CustomHeaders StreamingUpload CompileTest)
+
+        # Arduino examples: examples/arduino/<Name>/<Name>.ino
+        for name in "${expected[@]}"; do
+          sketch="examples/arduino/${name}/${name}.ino"
+          test -f "$sketch" || (echo "Arduino sketch missing: $sketch" && exit 1)
         done
-        
+
+        # PlatformIO examples: examples/platformio/<Name>/{platformio.ini, src/main.cpp}
+        for name in "${expected[@]}"; do
+          projdir="examples/platformio/${name}"
+          test -f "$projdir/platformio.ini" || (echo "PlatformIO config missing: $projdir/platformio.ini" && exit 1)
+          test -f "$projdir/src/main.cpp" || (echo "PlatformIO source missing: $projdir/src/main.cpp" && exit 1)
+        done
+
         echo "Library structure validation passed!"

@@ -1,8 +1,5 @@
 /**
- * Compilation Test for ESPAsyncWebClient
- *
- * This example tests that all library functions compile correctly
- * without actually executing network operations in CI environments.
+ * Compilation Test for ESPAsyncWebClient (PlatformIO)
  */
 
 #include <Arduino.h>
@@ -11,11 +8,11 @@
 
 AsyncHttpClient client;
 void testHttpMethodsCompilation();
+
 void setup() {
     Serial.begin(115200);
     Serial.println("\n=== ESPAsyncWebClient Compilation Test ===");
 
-// Test compilation only - no actual network operations in CI
 #ifndef COMPILE_TEST_ONLY
     Serial.println("Testing WiFi connection...");
     WiFi.begin("test-ssid", "test-password");
@@ -100,9 +97,10 @@ void testHttpMethodsCompilation() {
 }
 
 void loop() {
-#if !ASYNC_TCP_HAS_TIMEOUT
-    client.loop();
-#endif
+    // Timeouts: call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // #if !ASYNC_TCP_HAS_TIMEOUT
+    // client.loop();
+    // #endif
     // Simple heartbeat to show the program is running
     static unsigned long lastHeartbeat = 0;
     unsigned long now = millis();

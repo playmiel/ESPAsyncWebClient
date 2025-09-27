@@ -74,14 +74,20 @@ void setup() {
 
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
-    client.loop();
+    // With older AsyncTCP (no native timeout), the library now auto-ticks via a FreeRTOS task on ESP32.
+    // You generally don't need to call client.loop() yourself anymore.
+    // Call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // client.loop();
 #endif
-    delay(1000);
 }
 ```
 
-If your AsyncTCP library does not provide native timeout support (`setTimeout`),
-remember to call `client.loop()` regularly to handle manual timeout checks.
+On ESP32, when AsyncTCP lacks native timeout support, the library automatically creates a tiny FreeRTOS task
+that drives internal timeouts. To avoid concurrency or if you prefer manual control, do NOT define the macro
+`ASYNC_HTTP_ENABLE_AUTOLOOP` and call `client.loop()` periodically in your sketch's loop(). If you do define
+`-DASYNC_HTTP_ENABLE_AUTOLOOP` (ESP32 only), the library creates a background FreeRTOS task that calls
+`client.loop()` for you.
+call `client.loop()` periodically yourself.
 
 ## API Reference
 
@@ -234,20 +240,7 @@ client.request(request, onSuccess);
 
 ## Error Handling
 
-Error codes passed to error callbacks:
-
-| Code | Enum | Meaning |
-|------|------|---------|
-| -1 | CONNECTION_FAILED | Failed to initiate TCP connection |
-| -2 | HEADER_PARSE_FAILED | Malformed HTTP response headers |
-| -3 | CONNECTION_CLOSED | Connection closed before headers OR mid-body (see message) |
-| -4 | REQUEST_TIMEOUT | Overall request timeout elapsed |
-| -5 | HTTPS_NOT_SUPPORTED | HTTPS/TLS not implemented yet |
-| -6 | CHUNKED_DECODE_FAILED | Failed to decode chunked transfer body |
-| -7 | CONNECT_TIMEOUT | Connect phase exceeded connect timeout |
-| -8 | BODY_STREAM_READ_FAILED | Streaming request body provider failed |
-| -9 | ABORTED | Request cancelled via abort(id) |
-| >0 | (AsyncTCP) | Underlying AsyncTCP positive error codes |
+Error codes passed to error callbacks: see the single authoritative table in the “Error Codes” section below.
 
 ```cpp
 client.get("http://example.com", onSuccess,
@@ -381,22 +374,23 @@ Limitations:
 
 For very large bodies or future streaming options, a hook would be placed inside `handleData` after `headersComplete` before `appendBody`.
 
-## Error Codes (updated)
+## Error Codes
+
+Single authoritative list (kept in sync with `HttpCommon.h`):
 
 | Code | Enum | Meaning |
-|------|-----|--------------------|
-| -1 | CONNECTION_FAILED | Failed to initiate TCP connection |
+|------|------|---------|
+| -1 | CONNECTION_FAILED | Failed to initiate TCP connection or transport error mapped from AsyncTCP |
 | -2 | HEADER_PARSE_FAILED | Invalid HTTP response headers |
-| -3 | CONNECTION_CLOSED | Connection closed before headers or body truncated |
+| -3 | CONNECTION_CLOSED | Connection closed before headers received |
 | -4 | REQUEST_TIMEOUT | Total request timeout exceeded |
 | -5 | HTTPS_NOT_SUPPORTED | HTTPS not supported yet |
 | -6 | CHUNKED_DECODE_FAILED | Failed to decode chunked body |
 | -7 | CONNECT_TIMEOUT | Connect phase timeout |
 | -8 | BODY_STREAM_READ_FAILED | Body streaming provider failed |
 | -9 | ABORTED | Aborted by user |
-| >0 | (AsyncTCP) | Underlying AsyncTCP positive error codes |
-
-Positive codes (>0): direct AsyncTCP codes; inspect numeric value for low-level diagnostics.
+| -10 | CONNECTION_CLOSED_MID_BODY | Connection closed after headers with body still missing bytes (truncated body) |
+| >0 | (AsyncTCP) | Not used: transport errors are mapped to CONNECTION_FAILED |
 
 Example mapping in a callback:
 
@@ -405,13 +399,14 @@ client.get("http://example.com",
   [](AsyncHttpResponse* r) {
       Serial.printf("OK %d %s\n", r->getStatusCode(), r->getStatusText().c_str());
   },
-  [](HttpClientError e, const char* msg) {
+        [](HttpClientError e, const char* msg) {
       switch (e) {
           case CONNECTION_FAILED: Serial.println("TCP connect failed"); break;
           case HEADER_PARSE_FAILED: Serial.println("Bad HTTP header"); break;
-          case CONNECTION_CLOSED: Serial.println("Closed early"); break;
+          case CONNECTION_CLOSED: Serial.println("Closed before headers"); break;
+          case CONNECTION_CLOSED_MID_BODY: Serial.println("Body truncated (closed mid-body)"); break;
           case REQUEST_TIMEOUT: Serial.println("Timeout"); break;
-          default: Serial.printf("AsyncTCP error pass-through: %d\n", (int)e); break;
+                    default: Serial.printf("Network error: %s (%d)\n", httpClientErrorToString(e), (int)e); break;
       }
   }
 );
@@ -473,6 +468,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 Current: only the `Accept-Encoding: gzip` header can be added via `enableGzipAcceptEncoding(true)`.
 The library DOES NOT yet decompress gzip payloads. If you don't want compressed responses, simply don't enable the header.
+
+Important: calling `enableGzipAcceptEncoding(false)` does not remove the header if it was already added earlier on the same request instance. Create a new request without enabling it to avoid sending the header.
 A future optional flag (`ASYNC_HTTP_ENABLE_GZIP_DECODE`) may add a tiny inflater (miniz/zlib) after flash/RAM impact is evaluated.
 
 ### HTTPS (Not Supported Yet)
@@ -516,7 +513,7 @@ If you define `ASYNC_HTTP_LEGACY_VOID_API` (e.g. via build flags), the class exp
 
 ### Advanced Example
 
-See `examples/StreamingUpload/StreamingUpload.ino` for a streaming (no-copy) upload demonstrating:
+See Arduino sketch at `examples/arduino/StreamingUpload/StreamingUpload.ino` or the PlatformIO project at `examples/platformio/StreamingUpload/src/main.cpp` for a streaming (no-copy) upload demonstrating:
 
 - `setBodyStream()`
 - Basic Auth (`setBasicAuth`)

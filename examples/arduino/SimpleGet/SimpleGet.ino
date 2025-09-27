@@ -7,7 +7,6 @@ AsyncHttpClient client;
 void setup() {
     Serial.begin(115200);
 
-    // Connect to WiFi
     WiFi.begin("your-ssid", "your-password");
     while (WiFi.status() != WL_CONNECTED) {
         delay(1000);
@@ -15,7 +14,6 @@ void setup() {
     }
     Serial.println("Connected to WiFi");
 
-    // Make a simple GET request
     client.get(
         "http://httpbin.org/get",
         [](AsyncHttpResponse* response) {
@@ -30,7 +28,8 @@ void setup() {
 
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
-    client.loop();
+    // ESP32 fallback mode: the library auto-ticks timeouts via a FreeRTOS task.
+        // Call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // client.loop();
 #endif
-    delay(1000);
 }

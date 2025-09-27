@@ -22,36 +22,25 @@ jobs:
         python -m pip install --upgrade pip
         pip install --upgrade platformio
     
-    - name: Validate all examples build successfully
+    - name: Validate PlatformIO examples build successfully
       run: |
-        for example in examples/*; do
-          if [ -d "$example" ]; then
-            example_name=$(basename "$example")
-            echo "Building example: $example_name"
-            
-            mkdir -p /tmp/release_test_$example_name/lib/ESPAsyncWebClient
-            cp -r "$example"/* /tmp/release_test_$example_name/
-            cp -r src/* /tmp/release_test_$example_name/lib/ESPAsyncWebClient/
-            
-            cat > /tmp/release_test_$example_name/platformio.ini << 'EOF'
-        [platformio]
-        default_envs = esp32dev
-        
-        [env]
-        framework = arduino
-        lib_deps = 
-            https://github.com/ESP32Async/AsyncTCP.git
-            bblanchon/ArduinoJson@^6.21.0
-        
-        [env:esp32dev]
-        platform = espressif32
-        board = esp32dev
-        EOF
-            
-            cd /tmp/release_test_$example_name
-            pio run
-            cd -
-          fi
+        set -e
+        examples=(SimpleGet PostWithData MultipleRequests CustomHeaders StreamingUpload CompileTest)
+        for name in "${examples[@]}"; do
+          echo "Building PlatformIO example: $name"
+          dir="examples/platformio/${name}"
+          test -f "$dir/platformio.ini" || (echo "Missing platformio.ini in $dir" && exit 1)
+          test -f "$dir/src/main.cpp" || (echo "Missing src/main.cpp in $dir" && exit 1)
+          (cd "$dir" && pio run -e esp32dev)
+        done
+
+    - name: Verify Arduino sketches exist
+      run: |
+        set -e
+        examples=(SimpleGet PostWithData MultipleRequests CustomHeaders StreamingUpload CompileTest)
+        for name in "${examples[@]}"; do
+          sketch="examples/arduino/${name}/${name}.ino"
+          test -f "$sketch" || (echo "Missing Arduino sketch: $sketch" && exit 1)
         done
     - name: Verify release metadata & consistency
       run: |

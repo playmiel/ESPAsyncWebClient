@@ -1,7 +1,6 @@
-// Example: Streaming upload + basic auth + query builder + per-request body chunk callback
+// Example: Streaming upload + basic auth + query builder + global body chunk callback
 #include <Arduino.h>
 #include <WiFi.h>
-#include <AsyncTCP.h>
 #include <ESPAsyncWebClient.h>
 
 // Adjust with your network
@@ -80,8 +79,8 @@ void setup() {
 }
 
 void loop() {
-    // Only needed if ASYNC_TCP_HAS_TIMEOUT not defined OR for queue progression + connect timeout checks + streaming
-    // progress
-    client.loop();
-    delay(10);
+#if !ASYNC_TCP_HAS_TIMEOUT
+    // Timeouts: call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // client.loop();
+#endif
 }
