@@ -65,10 +65,7 @@ class AsyncHttpClient {
         _defaultConnectTimeout = ms;
     }
     void setMaxBodySize(size_t maxSize);
-    void setMaxParallel(uint16_t maxParallel) {
-        _maxParallel = maxParallel;
-        tryDequeue();
-    }
+    void setMaxParallel(uint16_t maxParallel);
 
     // Advanced request method
     uint32_t request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);

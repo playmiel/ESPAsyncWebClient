@@ -112,7 +112,16 @@ void AsyncHttpClient::setUserAgent(const char* userAgent) {
 }
 
 void AsyncHttpClient::setMaxBodySize(size_t maxSize) {
+    lock();
     _maxBodySize = maxSize;
+    unlock();
+}
+
+void AsyncHttpClient::setMaxParallel(uint16_t maxParallel) {
+    lock();
+    _maxParallel = maxParallel;
+    unlock();
+    tryDequeue();
 }
 
 uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
@@ -300,8 +309,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             int lineEndT = context->responseBuffer.indexOf("\r\n");
             if (lineEndT == -1) {
                 int lfPos = context->responseBuffer.indexOf('\n');
-                if (lfPos != -1 &&
-                    (lfPos == 0 || context->responseBuffer.charAt(lfPos - 1) != '\r')) {
+                if (lfPos != -1 && (lfPos == 0 || context->responseBuffer.charAt(lfPos - 1) != '\r')) {
                     triggerError(context, CHUNKED_DECODE_FAILED, "Chunk trailer missing CRLF");
                     return;
                 }
@@ -327,8 +335,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             int lineEnd = context->responseBuffer.indexOf("\r\n");
             if (lineEnd == -1) {
                 int lfPos = context->responseBuffer.indexOf('\n');
-                if (lfPos != -1 &&
-                    (lfPos == 0 || context->responseBuffer.charAt(lfPos - 1) != '\r')) {
+                if (lfPos != -1 && (lfPos == 0 || context->responseBuffer.charAt(lfPos - 1) != '\r')) {
                     triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size missing CRLF");
                     return;
                 }
