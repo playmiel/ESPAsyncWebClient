@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cerrno>
 
+static constexpr size_t kMaxChunkSizeLineLen = 64;
+
 AsyncHttpClient::AsyncHttpClient()
     : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
       _bodyChunkCallback(nullptr) {
@@ -107,6 +109,19 @@ void AsyncHttpClient::setUserAgent(const char* userAgent) {
     lock();
     _defaultUserAgent = String(userAgent);
     unlock();
+}
+
+void AsyncHttpClient::setMaxBodySize(size_t maxSize) {
+    lock();
+    _maxBodySize = maxSize;
+    unlock();
+}
+
+void AsyncHttpClient::setMaxParallel(uint16_t maxParallel) {
+    lock();
+    _maxParallel = maxParallel;
+    unlock();
+    tryDequeue();
 }
 
 uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
@@ -233,35 +248,53 @@ void AsyncHttpClient::handleConnect(RequestContext* context, AsyncClient* client
 
 void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, char* data, size_t len) {
     context->responseBuffer.concat(data, len);
+    bool enforceLimit = shouldEnforceBodyLimit(context);
+    auto wouldExceedLimit = [&](size_t incoming) -> bool {
+        if (!enforceLimit)
+            return false;
+        size_t current = context->receivedContentLength;
+        if (current >= _maxBodySize)
+            return true;
+        return incoming > (_maxBodySize - current);
+    };
+
     if (!context->headersComplete) {
         int headerEnd = context->responseBuffer.indexOf("\r\n\r\n");
         if (headerEnd != -1) {
             String headerData = context->responseBuffer.substring(0, headerEnd);
             if (parseResponseHeaders(context, headerData)) {
                 context->headersComplete = true;
-                String bodyData = context->responseBuffer.substring(headerEnd + 4);
-                if (!bodyData.isEmpty()) {
-                    if (context->chunked) {
-                        context->responseBuffer = bodyData;
-                    } else {
-                        if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
-                            context->response->appendBody(bodyData.c_str(), bodyData.length());
-                        }
-                        context->receivedContentLength += bodyData.length();
-                        // snapshot callback to avoid race if user modifies it concurrently
-                        auto cb = _bodyChunkCallback;
-                        if (cb)
-                            cb(bodyData.c_str(), bodyData.length(), false);
-                        context->responseBuffer = "";
+                if (enforceLimit && context->expectedContentLength > 0 &&
+                    context->expectedContentLength > _maxBodySize) {
+                    triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+                    return;
+                }
+                context->responseBuffer.remove(0, headerEnd + 4);
+                if (!context->chunked && context->responseBuffer.length() > 0) {
+                    size_t incomingLen = context->responseBuffer.length();
+                    if (wouldExceedLimit(incomingLen)) {
+                        triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+                        return;
                     }
-                } else
+                    if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+                        context->response->appendBody(context->responseBuffer.c_str(), incomingLen);
+                    }
+                    context->receivedContentLength += incomingLen;
+                    auto cb = _bodyChunkCallback;
+                    if (cb)
+                        cb(context->responseBuffer.c_str(), incomingLen, false);
                     context->responseBuffer = "";
+                }
             } else {
                 triggerError(context, HEADER_PARSE_FAILED, "Failed to parse response headers");
                 return;
             }
         }
     } else if (!context->chunked) {
+        if (wouldExceedLimit(len)) {
+            triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+            return;
+        }
         if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
             context->response->appendBody(data, len);
         }
@@ -272,10 +305,46 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
     }
 
     while (context->headersComplete && context->chunked && !context->chunkedComplete) {
-        if (context->currentChunkRemaining == 0) {
-            int lineEnd = context->responseBuffer.indexOf("\r\n");
-            if (lineEnd == -1)
+        if (context->awaitingFinalChunkTerminator) {
+            int lineEndT = context->responseBuffer.indexOf("\r\n");
+            if (lineEndT == -1) {
+                int lfPos = context->responseBuffer.indexOf('\n');
+                if (lfPos != -1 && (lfPos == 0 || context->responseBuffer.charAt(lfPos - 1) != '\r')) {
+                    triggerError(context, CHUNKED_DECODE_FAILED, "Chunk trailer missing CRLF");
+                    return;
+                }
                 break;
+            }
+            if (lineEndT != 0) {
+                context->responseBuffer.remove(0, lineEndT + 2);
+                continue;
+            }
+            context->responseBuffer.remove(0, 2);
+            context->awaitingFinalChunkTerminator = false;
+            context->chunkedComplete = true;
+            context->responseBuffer = "";
+            break;
+        }
+
+        if (context->currentChunkRemaining == 0) {
+            if (context->responseBuffer.length() > kMaxChunkSizeLineLen &&
+                context->responseBuffer.indexOf("\r\n") == -1) {
+                triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size line too long");
+                return;
+            }
+            int lineEnd = context->responseBuffer.indexOf("\r\n");
+            if (lineEnd == -1) {
+                int lfPos = context->responseBuffer.indexOf('\n');
+                if (lfPos != -1 && (lfPos == 0 || context->responseBuffer.charAt(lfPos - 1) != '\r')) {
+                    triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size missing CRLF");
+                    return;
+                }
+                break;
+            }
+            if (lineEnd > (int)kMaxChunkSizeLineLen) {
+                triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size line too long");
+                return;
+            }
             String sizeLine = context->responseBuffer.substring(0, lineEnd);
             sizeLine.trim();
             uint32_t chunkSize = 0;
@@ -283,35 +352,30 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                 triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size parse error");
                 return;
             }
+            if (chunkSize > 0 && wouldExceedLimit(chunkSize)) {
+                triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+                return;
+            }
             context->currentChunkRemaining = chunkSize;
             context->responseBuffer.remove(0, lineEnd + 2);
             if (chunkSize == 0) {
-                // Final chunk: mark complete and purge any (optional) trailer headers.
-                context->chunkedComplete = true;
-                // Trailer section ends with an empty line (CRLF CRLF). We already consumed size line.
-                bool trailersEnded = false;
-                while (true) {
-                    int lineEnd2 = context->responseBuffer.indexOf("\r\n");
-                    if (lineEnd2 == -1)
-                        break;           // incomplete, wait for more
-                    if (lineEnd2 == 0) { // empty line => end of trailers
-                        context->responseBuffer.remove(0, 2);
-                        trailersEnded = true;
-                        break;
-                    }
-                    // discard this trailer line
-                    context->responseBuffer.remove(0, lineEnd2 + 2);
-                }
-                // After the final chunk and end of trailers, clear the buffer for cleanliness.
-                if (trailersEnded) {
-                    context->responseBuffer = "";
-                }
-                break;
+                context->awaitingFinalChunkTerminator = true;
+                continue;
             }
         }
-        if ((int)context->responseBuffer.length() < (int)(context->currentChunkRemaining + 2))
+        size_t needed = context->currentChunkRemaining + 2;
+        if (context->responseBuffer.length() < needed)
             break;
+        if (context->responseBuffer.charAt(context->currentChunkRemaining) != '\r' ||
+            context->responseBuffer.charAt(context->currentChunkRemaining + 1) != '\n') {
+            triggerError(context, CHUNKED_DECODE_FAILED, "Chunk missing terminating CRLF");
+            return;
+        }
         String chunkData = context->responseBuffer.substring(0, context->currentChunkRemaining);
+        if (wouldExceedLimit(chunkData.length())) {
+            triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+            return;
+        }
         if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
             context->response->appendBody(chunkData.c_str(), chunkData.length());
         }
@@ -319,7 +383,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
         auto cb3 = _bodyChunkCallback;
         if (cb3)
             cb3(chunkData.c_str(), chunkData.length(), false);
-        context->responseBuffer.remove(0, context->currentChunkRemaining + 2);
+        context->responseBuffer.remove(0, needed);
         context->currentChunkRemaining = 0;
     }
 
@@ -343,6 +407,8 @@ bool AsyncHttpClient::parseChunkSizeLine(const String& line, uint32_t* outSize) 
     if (!outSize)
         return false;
     if (line.length() == 0)
+        return false;
+    if (line.length() > kMaxChunkSizeLineLen)
         return false;
     // Spec allows chunk extensions after size separated by ';'. We ignore extensions for now.
     int semi = line.indexOf(';');
@@ -553,4 +619,14 @@ void AsyncHttpClient::sendStreamData(RequestContext* context) {
         context->client->write((const char*)temp, written);
     if (final)
         context->streamingBodyInProgress = false;
+}
+
+bool AsyncHttpClient::shouldEnforceBodyLimit(RequestContext* context) {
+    if (_maxBodySize == 0)
+        return false;
+    if (!context || !context->request)
+        return true;
+    if (context->request->getNoStoreBody() && _bodyChunkCallback)
+        return false;
+    return true;
 }

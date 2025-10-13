@@ -33,6 +33,10 @@ void AsyncHttpResponse::appendBody(const char* data, size_t len) {
     }
 }
 
+void AsyncHttpResponse::setContentLength(size_t length) {
+    _contentLength = length;
+}
+
 void AsyncHttpResponse::clear() {
     _statusCode = 0;
     _statusText = "";

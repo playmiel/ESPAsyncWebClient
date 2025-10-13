@@ -19,9 +19,9 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Simple API** - Easy to use with minimal setup
 - ✅ **Configurable timeouts** - Set custom timeout values
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
-- ⚠️ **Basic chunked transfer decoding** - Simple implementation (no trailers)
+- ⚠️ **Chunked transfer decoding** - Validates chunk framing but still discards trailers
 
-> ⚠ Limitations: HTTPS not implemented; chunked decoding is minimal (no trailers); full body is buffered in memory (no zero-copy streaming yet).
+> ⚠ Limitations: HTTPS not implemented; chunked decoding validates frames but still discards trailers; full body is buffered in memory (no zero-copy streaming yet).
 
 ## Installation
 
@@ -136,6 +136,9 @@ void setTimeout(uint32_t timeout);
 
 // Set connect phase timeout distinct from total timeout
 void setDefaultConnectTimeout(uint32_t ms);
+
+// Soft limit for buffered response bodies (bytes, 0 = unlimited)
+void setMaxBodySize(size_t maxBytes);
 
 // Limit simultaneous active requests (0 = unlimited, others queued)
 void setMaxParallel(uint16_t maxParallel);
@@ -324,15 +327,17 @@ Notes:
 
 If `Content-Length` is present, the response is considered complete once that many bytes have been received. Extra bytes (if a misbehaving server sends more) are ignored. Without `Content-Length`, completion is determined by connection close.
 
+Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` (default) to disable the guard.
+
 ### Transfer-Encoding: chunked
 
-Minimal chunked decoding is implemented.
+Chunked decoding validates frame boundaries and discards trailer headers quietly.
 
-Limitations:
+Highlights / limitations:
 
-- No trailer support (ignored if present)
-- No advanced validation (extensions, checksums)
-- On parse failure you get `CHUNKED_DECODE_FAILED`
+- Trailer headers are skipped (not exposed to user callbacks)
+- Chunk extensions are ignored but accepted
+- Strict CRLF framing is required; malformed chunks raise `CHUNKED_DECODE_FAILED`
 
 ### HTTPS (not supported)
 
@@ -359,8 +364,8 @@ Limitations:
 ## Current Limitations (summary)
 
 - No TLS (HTTPS rejected)
-- Chunked: minimal (no trailers)
-- Full in-memory buffering (even with streaming hook)
+- Chunked: trailers discarded (not exposed to callbacks)
+- Full in-memory buffering (guard with `setMaxBodySize` or use no-store + chunk callback)
 - No automatic redirects (3xx not followed)
 - No long-lived keep-alive: default header `Connection: close`; no connection reuse currently.
 - Manual timeout loop required if AsyncTCP version lacks `setTimeout` (call `client.loop()` in `loop()`).
@@ -394,6 +399,7 @@ Single authoritative list (kept in sync with `HttpCommon.h`):
 | -8 | BODY_STREAM_READ_FAILED | Body streaming provider failed |
 | -9 | ABORTED | Aborted by user |
 | -10 | CONNECTION_CLOSED_MID_BODY | Connection closed after headers with body still missing bytes (truncated body) |
+| -11 | MAX_BODY_SIZE_EXCEEDED | Body exceeds configured maximum (`setMaxBodySize`) |
 | >0 | (AsyncTCP) | Not used: transport errors are mapped to CONNECTION_FAILED |
 
 Example mapping in a callback:
@@ -410,6 +416,7 @@ client.get("http://example.com",
           case CONNECTION_CLOSED: Serial.println("Closed before headers"); break;
           case CONNECTION_CLOSED_MID_BODY: Serial.println("Body truncated (closed mid-body)"); break;
           case REQUEST_TIMEOUT: Serial.println("Timeout"); break;
+          case MAX_BODY_SIZE_EXCEEDED: Serial.println("Body exceeded guard"); break;
                     default: Serial.printf("Network error: %s (%d)\n", httpClientErrorToString(e), (int)e); break;
       }
   }
@@ -423,7 +430,7 @@ client.get("http://example.com",
 To test compatibility with different versions of AsyncTCP, use the provided test script:
 
 ```bash
-./test_dependencies.sh
+./scripts/test-dependencies.sh
 ```
 
 This script tests compilation with:
@@ -444,6 +451,9 @@ pio run -e test_asynctcp_stable
 
 # Basic compilation test
 pio run -e compile_test
+
+# Chunk decoder regression tests
+pio test -e esp32dev -f test_chunk_parse
 ```
 
 ## License
@@ -465,8 +475,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Optional Accept-Encoding: gzip (no automatic decompression yet)
 - Separate connect timeout and total timeout
 - Optional request queue limiting parallel connections (setMaxParallel)
+- Soft response buffering guard (`setMaxBodySize`) to fail fast on oversized payloads
 - Request ID return (all helper methods now return a uint32_t identifier)
-- No-store body mode: `req->setNoStoreBody(true)` to avoid buffering body when a chunk callback is used
+- No-store body mode: `req->setNoStoreBody(true)` to avoid buffering body when a chunk callback is used (final `(nullptr, 0, true)` event fired once)
 
 ### Gzip / Compression
 
@@ -479,41 +490,6 @@ A future optional flag (`ASYNC_HTTP_ENABLE_GZIP_DECODE`) may add a tiny inflater
 ### HTTPS (Not Supported Yet)
 
 HTTPS is not implemented. Any `https://` URL returns `HTTPS_NOT_SUPPORTED`. A future drop-in TLS client (replacing `AsyncClient`) is planned without breaking the public API.
-
-<!-- Note: per-request chunk callback removed; use global client.onBodyChunk -->
-
-### API Change: Request ID Return (Breaking)
-
-All convenience request methods (get/post/put/delete/head/patch/request) now return a `uint32_t` request ID.
-
-Pros:
-
-- Enables precise cancellation with `abort(id)`.
-- Easier correlation of logs/metrics to in-flight requests.
-- Foundation for retry/backoff orchestration or tracing layers.
-- Allows future per-request state lookups (timings) without storing pointers.
-
-Cons / Migration impact:
-
-- Existing sketches expecting `void` will fail to compile (signature mismatch).
-- Wrapper libraries must update their own forwarders.
-- Users ignoring the value may see an unused result warning (can cast to `(void)` if desired).
-
-Potential compatibility shim (not included by default):
-
-```cpp
-#ifdef ASYNC_HTTP_LEGACY_VOID_API
-inline void get_legacy(AsyncHttpClient& c, const char* url,
-        AsyncHttpClient::SuccessCallback ok,
-        AsyncHttpClient::ErrorCallback err = nullptr) {
-    (void)c.get(url, ok, err);
-}
-#endif
-```
-
-Request if you would like these legacy inline adapters added to the library.
-
-If you define `ASYNC_HTTP_LEGACY_VOID_API` (e.g. via build flags), the class exposes helper wrappers like `get_legacy()`, `post_legacy()`, etc., that reproduce the old `void` signatures while discarding the new request ID.
 
 ### Advanced Example
 
