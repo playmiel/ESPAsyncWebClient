@@ -491,41 +491,6 @@ A future optional flag (`ASYNC_HTTP_ENABLE_GZIP_DECODE`) may add a tiny inflater
 
 HTTPS is not implemented. Any `https://` URL returns `HTTPS_NOT_SUPPORTED`. A future drop-in TLS client (replacing `AsyncClient`) is planned without breaking the public API.
 
-<!-- Note: per-request chunk callback removed; use global client.onBodyChunk -->
-
-### API Change: Request ID Return (Breaking)
-
-All convenience request methods (get/post/put/delete/head/patch/request) now return a `uint32_t` request ID.
-
-Pros:
-
-- Enables precise cancellation with `abort(id)`.
-- Easier correlation of logs/metrics to in-flight requests.
-- Foundation for retry/backoff orchestration or tracing layers.
-- Allows future per-request state lookups (timings) without storing pointers.
-
-Cons / Migration impact:
-
-- Existing sketches expecting `void` will fail to compile (signature mismatch).
-- Wrapper libraries must update their own forwarders.
-- Users ignoring the value may see an unused result warning (can cast to `(void)` if desired).
-
-Potential compatibility shim (not included by default):
-
-```cpp
-#ifdef ASYNC_HTTP_LEGACY_VOID_API
-inline void get_legacy(AsyncHttpClient& c, const char* url,
-        AsyncHttpClient::SuccessCallback ok,
-        AsyncHttpClient::ErrorCallback err = nullptr) {
-    (void)c.get(url, ok, err);
-}
-#endif
-```
-
-Request if you would like these legacy inline adapters added to the library.
-
-If you define `ASYNC_HTTP_LEGACY_VOID_API` (e.g. via build flags), the class exposes helper wrappers like `get_legacy()`, `post_legacy()`, etc., that reproduce the old `void` signatures while discarding the new request ID.
-
 ### Advanced Example
 
 See Arduino sketch at `examples/arduino/StreamingUpload/StreamingUpload.ino` or the PlatformIO project at `examples/platformio/StreamingUpload/src/main.cpp` for a streaming (no-copy) upload demonstrating:
