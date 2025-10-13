@@ -64,6 +64,7 @@ class AsyncHttpClient {
     void setDefaultConnectTimeout(uint32_t ms) {
         _defaultConnectTimeout = ms;
     }
+    void setMaxBodySize(size_t maxSize);
     void setMaxParallel(uint16_t maxParallel) {
         _maxParallel = maxParallel;
         tryDequeue();
@@ -116,6 +117,7 @@ class AsyncHttpClient {
         bool chunked;
         bool chunkedComplete;
         size_t currentChunkRemaining;
+        bool awaitingFinalChunkTerminator;
         uint32_t id;
         // perRequestChunkCb removed
         uint32_t connectStartMs;
@@ -128,8 +130,8 @@ class AsyncHttpClient {
         RequestContext()
             : request(nullptr), response(nullptr), client(nullptr), headersComplete(false), responseProcessed(false),
               expectedContentLength(0), receivedContentLength(0), chunked(false), chunkedComplete(false),
-              currentChunkRemaining(0), id(0), connectStartMs(0), connectTimeoutMs(0), headersSent(false),
-              streamingBodyInProgress(false)
+              currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), connectStartMs(0),
+              connectTimeoutMs(0), headersSent(false), streamingBodyInProgress(false)
 #if !ASYNC_TCP_HAS_TIMEOUT
               ,
               timeoutTimer(0)
@@ -144,6 +146,7 @@ class AsyncHttpClient {
     BodyChunkCallback _bodyChunkCallback;
     uint32_t _nextRequestId = 1;
     uint16_t _maxParallel = 0; // 0 => unlimited
+    size_t _maxBodySize = 0;   // 0 => unlimited
     std::vector<RequestContext*> _activeRequests;
     std::vector<RequestContext*> _pendingQueue;
     uint32_t _defaultConnectTimeout = 5000;
@@ -167,6 +170,7 @@ class AsyncHttpClient {
     void triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage);
     void tryDequeue();
     void sendStreamData(RequestContext* context);
+    bool shouldEnforceBodyLimit(RequestContext* context);
 
   public:
     // Exposed publicly for tests and advanced internal usage

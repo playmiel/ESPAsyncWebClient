@@ -52,9 +52,7 @@ class AsyncHttpResponse {
     }
     void setHeader(const String& name, const String& value);
     void appendBody(const char* data, size_t len);
-    void setContentLength(size_t length) {
-        _contentLength = length;
-    }
+    void setContentLength(size_t length);
     void clear();
 
   private:

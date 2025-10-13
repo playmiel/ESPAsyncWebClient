@@ -19,9 +19,9 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Simple API** - Easy to use with minimal setup
 - ✅ **Configurable timeouts** - Set custom timeout values
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
-- ⚠️ **Basic chunked transfer decoding** - Simple implementation (no trailers)
+- ⚠️ **Chunked transfer decoding** - Validates chunk framing but still discards trailers
 
-> ⚠ Limitations: HTTPS not implemented; chunked decoding is minimal (no trailers); full body is buffered in memory (no zero-copy streaming yet).
+> ⚠ Limitations: HTTPS not implemented; chunked decoding validates frames but still discards trailers; full body is buffered in memory (no zero-copy streaming yet).
 
 ## Installation
 
@@ -136,6 +136,9 @@ void setTimeout(uint32_t timeout);
 
 // Set connect phase timeout distinct from total timeout
 void setDefaultConnectTimeout(uint32_t ms);
+
+// Soft limit for buffered response bodies (bytes, 0 = unlimited)
+void setMaxBodySize(size_t maxBytes);
 
 // Limit simultaneous active requests (0 = unlimited, others queued)
 void setMaxParallel(uint16_t maxParallel);
@@ -324,15 +327,17 @@ Notes:
 
 If `Content-Length` is present, the response is considered complete once that many bytes have been received. Extra bytes (if a misbehaving server sends more) are ignored. Without `Content-Length`, completion is determined by connection close.
 
+Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` (default) to disable the guard.
+
 ### Transfer-Encoding: chunked
 
-Minimal chunked decoding is implemented.
+Chunked decoding validates frame boundaries and discards trailer headers quietly.
 
-Limitations:
+Highlights / limitations:
 
-- No trailer support (ignored if present)
-- No advanced validation (extensions, checksums)
-- On parse failure you get `CHUNKED_DECODE_FAILED`
+- Trailer headers are skipped (not exposed to user callbacks)
+- Chunk extensions are ignored but accepted
+- Strict CRLF framing is required; malformed chunks raise `CHUNKED_DECODE_FAILED`
 
 ### HTTPS (not supported)
 
@@ -359,8 +364,8 @@ Limitations:
 ## Current Limitations (summary)
 
 - No TLS (HTTPS rejected)
-- Chunked: minimal (no trailers)
-- Full in-memory buffering (even with streaming hook)
+- Chunked: trailers discarded (not exposed to callbacks)
+- Full in-memory buffering (guard with `setMaxBodySize` or use no-store + chunk callback)
 - No automatic redirects (3xx not followed)
 - No long-lived keep-alive: default header `Connection: close`; no connection reuse currently.
 - Manual timeout loop required if AsyncTCP version lacks `setTimeout` (call `client.loop()` in `loop()`).
@@ -394,6 +399,7 @@ Single authoritative list (kept in sync with `HttpCommon.h`):
 | -8 | BODY_STREAM_READ_FAILED | Body streaming provider failed |
 | -9 | ABORTED | Aborted by user |
 | -10 | CONNECTION_CLOSED_MID_BODY | Connection closed after headers with body still missing bytes (truncated body) |
+| -11 | MAX_BODY_SIZE_EXCEEDED | Body exceeds configured maximum (`setMaxBodySize`) |
 | >0 | (AsyncTCP) | Not used: transport errors are mapped to CONNECTION_FAILED |
 
 Example mapping in a callback:
@@ -410,6 +416,7 @@ client.get("http://example.com",
           case CONNECTION_CLOSED: Serial.println("Closed before headers"); break;
           case CONNECTION_CLOSED_MID_BODY: Serial.println("Body truncated (closed mid-body)"); break;
           case REQUEST_TIMEOUT: Serial.println("Timeout"); break;
+          case MAX_BODY_SIZE_EXCEEDED: Serial.println("Body exceeded guard"); break;
                     default: Serial.printf("Network error: %s (%d)\n", httpClientErrorToString(e), (int)e); break;
       }
   }
@@ -423,7 +430,7 @@ client.get("http://example.com",
 To test compatibility with different versions of AsyncTCP, use the provided test script:
 
 ```bash
-./test_dependencies.sh
+./scripts/test-dependencies.sh
 ```
 
 This script tests compilation with:
@@ -444,6 +451,9 @@ pio run -e test_asynctcp_stable
 
 # Basic compilation test
 pio run -e compile_test
+
+# Chunk decoder regression tests
+pio test -e esp32dev -f test_chunk_parse
 ```
 
 ## License
@@ -465,8 +475,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Optional Accept-Encoding: gzip (no automatic decompression yet)
 - Separate connect timeout and total timeout
 - Optional request queue limiting parallel connections (setMaxParallel)
+- Soft response buffering guard (`setMaxBodySize`) to fail fast on oversized payloads
 - Request ID return (all helper methods now return a uint32_t identifier)
-- No-store body mode: `req->setNoStoreBody(true)` to avoid buffering body when a chunk callback is used
+- No-store body mode: `req->setNoStoreBody(true)` to avoid buffering body when a chunk callback is used (final `(nullptr, 0, true)` event fired once)
 
 ### Gzip / Compression
 
