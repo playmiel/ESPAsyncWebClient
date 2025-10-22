@@ -6,8 +6,6 @@
 #include <cerrno>
 
 static constexpr size_t kMaxChunkSizeLineLen = 64;
-static constexpr size_t kMaxChunkTrailerLineLen = 256;
-static constexpr size_t kMaxChunkTrailerLines = 32;
 
 AsyncHttpClient::AsyncHttpClient()
     : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
@@ -101,27 +99,6 @@ void AsyncHttpClient::setHeader(const char* name, const char* value) {
         }
     }
     _defaultHeaders.push_back(HttpHeader(nameStr, valueStr));
-    unlock();
-}
-
-void AsyncHttpClient::removeHeader(const char* name) {
-    if (!name)
-        return;
-    String nameStr(name);
-    lock();
-    for (auto it = _defaultHeaders.begin(); it != _defaultHeaders.end();) {
-        if (it->name.equalsIgnoreCase(nameStr)) {
-            it = _defaultHeaders.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    unlock();
-}
-
-void AsyncHttpClient::clearHeaders() {
-    lock();
-    _defaultHeaders.clear();
     unlock();
 }
 
@@ -338,38 +315,15 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                 }
                 break;
             }
-            if (lineEndT == 0) {
-                context->responseBuffer.remove(0, 2);
-                context->awaitingFinalChunkTerminator = false;
-                context->chunkedComplete = true;
+            if (lineEndT != 0) {
+                context->responseBuffer.remove(0, lineEndT + 2);
                 continue;
             }
-            if (lineEndT > (int)kMaxChunkTrailerLineLen) {
-                triggerError(context, CHUNKED_DECODE_FAILED, "Chunk trailer line too long");
-                return;
-            }
-            if (context->trailerLineCount >= kMaxChunkTrailerLines) {
-                triggerError(context, CHUNKED_DECODE_FAILED, "Too many chunk trailers");
-                return;
-            }
-            String trailerLine = context->responseBuffer.substring(0, lineEndT);
-            int colonPos = trailerLine.indexOf(':');
-            if (colonPos == -1) {
-                triggerError(context, CHUNKED_DECODE_FAILED, "Chunk trailer missing colon");
-                return;
-            }
-            String name = trailerLine.substring(0, colonPos);
-            String value = trailerLine.substring(colonPos + 1);
-            name.trim();
-            value.trim();
-            if (name.length() == 0) {
-                triggerError(context, CHUNKED_DECODE_FAILED, "Chunk trailer name empty");
-                return;
-            }
-            context->response->setTrailer(name, value);
-            context->trailerLineCount++;
-            context->responseBuffer.remove(0, lineEndT + 2);
-            continue;
+            context->responseBuffer.remove(0, 2);
+            context->awaitingFinalChunkTerminator = false;
+            context->chunkedComplete = true;
+            context->responseBuffer = "";
+            break;
         }
 
         if (context->currentChunkRemaining == 0) {
@@ -406,7 +360,6 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             context->responseBuffer.remove(0, lineEnd + 2);
             if (chunkSize == 0) {
                 context->awaitingFinalChunkTerminator = true;
-                context->trailerLineCount = 0;
                 continue;
             }
         }
@@ -498,9 +451,6 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
         return;
     }
     // Otherwise success: either Content-Length reached, or no Content-Length and closure marks the end
-    auto cb = _bodyChunkCallback;
-    if (cb)
-        cb(nullptr, 0, true);
     processResponse(context);
 }
 
@@ -539,27 +489,21 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
         int lineEnd = headerData.indexOf("\r\n", lineStart);
         if (lineEnd == -1)
             break;
-            String line = headerData.substring(lineStart, lineEnd);
-            int colonPos = line.indexOf(':');
-            if (colonPos != -1) {
-                String name = line.substring(0, colonPos);
-                String value = line.substring(colonPos + 1);
-                value.trim();
-                context->response->setHeader(name, value);
-                if (name.equalsIgnoreCase("Content-Length")) {
-                    long parsed = value.toInt();
-                    if (parsed < 0)
-                        parsed = 0;
-                    context->expectedContentLength = (size_t)parsed;
-                    context->response->setContentLength(context->expectedContentLength);
-                    bool storeBody = !(context->request->getNoStoreBody() && _bodyChunkCallback);
-                    if (storeBody)
-                        context->response->reserveBody(context->expectedContentLength);
-                } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
-                    context->chunked = true;
-                }
+        String line = headerData.substring(lineStart, lineEnd);
+        int colonPos = line.indexOf(':');
+        if (colonPos != -1) {
+            String name = line.substring(0, colonPos);
+            String value = line.substring(colonPos + 1);
+            value.trim();
+            context->response->setHeader(name, value);
+            if (name.equalsIgnoreCase("Content-Length")) {
+                context->expectedContentLength = value.toInt();
+                context->response->setContentLength(context->expectedContentLength);
+            } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
+                context->chunked = true;
             }
-            lineStart = lineEnd + 2;
+        }
+        lineStart = lineEnd + 2;
     }
     return true;
 }
