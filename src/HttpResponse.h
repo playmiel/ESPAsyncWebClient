@@ -23,6 +23,10 @@ class AsyncHttpResponse {
     const std::vector<HttpHeader>& getHeaders() const {
         return _headers;
     }
+    const String& getTrailer(const String& name) const;
+    const std::vector<HttpHeader>& getTrailers() const {
+        return _trailers;
+    }
 
     // Response body
     const String& getBody() const {
@@ -51,14 +55,17 @@ class AsyncHttpResponse {
         _statusText = text;
     }
     void setHeader(const String& name, const String& value);
+    void setTrailer(const String& name, const String& value);
     void appendBody(const char* data, size_t len);
     void setContentLength(size_t length);
+    void reserveBody(size_t length);
     void clear();
 
   private:
     int _statusCode;
     String _statusText;
     std::vector<HttpHeader> _headers;
+    std::vector<HttpHeader> _trailers;
     String _body;
     size_t _contentLength;
     static String _emptyString;

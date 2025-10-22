@@ -59,6 +59,8 @@ class AsyncHttpClient {
 
     // Configuration methods
     void setHeader(const char* name, const char* value);
+    void removeHeader(const char* name);
+    void clearHeaders();
     void setTimeout(uint32_t timeout); // total request timeout
     void setUserAgent(const char* userAgent);
     void setDefaultConnectTimeout(uint32_t ms) {
@@ -116,6 +118,7 @@ class AsyncHttpClient {
         size_t currentChunkRemaining;
         bool awaitingFinalChunkTerminator;
         uint32_t id;
+        size_t trailerLineCount;
         // perRequestChunkCb removed
         uint32_t connectStartMs;
         uint32_t connectTimeoutMs;
@@ -127,8 +130,8 @@ class AsyncHttpClient {
         RequestContext()
             : request(nullptr), response(nullptr), client(nullptr), headersComplete(false), responseProcessed(false),
               expectedContentLength(0), receivedContentLength(0), chunked(false), chunkedComplete(false),
-              currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), connectStartMs(0),
-              connectTimeoutMs(0), headersSent(false), streamingBodyInProgress(false)
+              currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), trailerLineCount(0),
+              connectStartMs(0), connectTimeoutMs(0), headersSent(false), streamingBodyInProgress(false)
 #if !ASYNC_TCP_HAS_TIMEOUT
               ,
               timeoutTimer(0)
