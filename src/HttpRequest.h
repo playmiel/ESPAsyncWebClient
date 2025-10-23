@@ -35,7 +35,6 @@ class AsyncHttpRequest {
 
     // Headers management
     void setHeader(const String& name, const String& value);
-    void removeHeader(const String& name);
     const String& getHeader(const String& name) const;
     const std::vector<HttpHeader>& getHeaders() const {
         return _headers;

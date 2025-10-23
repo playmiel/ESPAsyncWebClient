@@ -27,16 +27,6 @@ void AsyncHttpRequest::setHeader(const String& name, const String& value) {
     _headers.push_back(HttpHeader(name, value));
 }
 
-void AsyncHttpRequest::removeHeader(const String& name) {
-    for (auto it = _headers.begin(); it != _headers.end();) {
-        if (it->name.equalsIgnoreCase(name)) {
-            it = _headers.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
-
 const String& AsyncHttpRequest::getHeader(const String& name) const {
     for (const auto& header : _headers) {
         if (header.name.equalsIgnoreCase(name)) {
@@ -190,6 +180,6 @@ void AsyncHttpRequest::enableGzipAcceptEncoding(bool enable) {
     if (enable) {
         setHeader("Accept-Encoding", "gzip");
     } else {
-        removeHeader("Accept-Encoding");
+        // no removal to keep code simple
     }
 }
