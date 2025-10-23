@@ -19,9 +19,9 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Simple API** - Easy to use with minimal setup
 - ✅ **Configurable timeouts** - Set custom timeout values
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
-- ⚠️ **Chunked transfer decoding** - Validates chunk framing but still discards trailers
+- ✅ **Chunked transfer decoding** - Validates framing and exposes parsed trailers
 
-> ⚠ Limitations: HTTPS not implemented; chunked decoding validates frames but still discards trailers; full body is buffered in memory (no zero-copy streaming yet).
+> ⚠ Limitations: HTTPS not implemented; full body is buffered in memory (no zero-copy streaming yet).
 
 ## Installation
 
@@ -130,6 +130,8 @@ bool abort(uint32_t requestId);
 ```cpp
 // Set global default header
 void setHeader(const char* name, const char* value);
+void removeHeader(const char* name);
+void clearHeaders();
 
 // Set total request timeout (milliseconds)
 void setTimeout(uint32_t timeout);
@@ -164,6 +166,8 @@ const String& getStatusText() const;
 // Response headers
 const String& getHeader(const String& name) const;
 const std::vector<HttpHeader>& getHeaders() const;
+const String& getTrailer(const String& name) const;
+const std::vector<HttpHeader>& getTrailers() const;
 
 // Response body
 const String& getBody() const;
@@ -184,6 +188,7 @@ AsyncHttpRequest request(HTTP_POST, "http://example.com/api");
 // Set headers
 request.setHeader("Content-Type", "application/json");
 request.setHeader("Authorization", "Bearer token");
+request.removeHeader("Accept-Encoding");
 
 // Set body
 request.setBody("{\"key\":\"value\"}");
@@ -331,11 +336,11 @@ Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `C
 
 ### Transfer-Encoding: chunked
 
-Chunked decoding validates frame boundaries and discards trailer headers quietly.
+Chunked decoding validates frame boundaries and parses trailer headers for attachment to the response object.
 
 Highlights / limitations:
 
-- Trailer headers are skipped (not exposed to user callbacks)
+- Trailer headers are parsed during chunked responses and available via `AsyncHttpResponse::getTrailers()`
 - Chunk extensions are ignored but accepted
 - Strict CRLF framing is required; malformed chunks raise `CHUNKED_DECODE_FAILED`
 
@@ -364,7 +369,7 @@ Highlights / limitations:
 ## Current Limitations (summary)
 
 - No TLS (HTTPS rejected)
-- Chunked: trailers discarded (not exposed to callbacks)
+- Chunked: trailers parsed and attached to `AsyncHttpResponse::getTrailers()`
 - Full in-memory buffering (guard with `setMaxBodySize` or use no-store + chunk callback)
 - No automatic redirects (3xx not followed)
 - No long-lived keep-alive: default header `Connection: close`; no connection reuse currently.
