@@ -539,27 +539,27 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
         int lineEnd = headerData.indexOf("\r\n", lineStart);
         if (lineEnd == -1)
             break;
-            String line = headerData.substring(lineStart, lineEnd);
-            int colonPos = line.indexOf(':');
-            if (colonPos != -1) {
-                String name = line.substring(0, colonPos);
-                String value = line.substring(colonPos + 1);
-                value.trim();
-                context->response->setHeader(name, value);
-                if (name.equalsIgnoreCase("Content-Length")) {
-                    long parsed = value.toInt();
-                    if (parsed < 0)
-                        parsed = 0;
-                    context->expectedContentLength = (size_t)parsed;
-                    context->response->setContentLength(context->expectedContentLength);
-                    bool storeBody = !(context->request->getNoStoreBody() && _bodyChunkCallback);
-                    if (storeBody)
-                        context->response->reserveBody(context->expectedContentLength);
-                } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
-                    context->chunked = true;
-                }
+        String line = headerData.substring(lineStart, lineEnd);
+        int colonPos = line.indexOf(':');
+        if (colonPos != -1) {
+            String name = line.substring(0, colonPos);
+            String value = line.substring(colonPos + 1);
+            value.trim();
+            context->response->setHeader(name, value);
+            if (name.equalsIgnoreCase("Content-Length")) {
+                long parsed = value.toInt();
+                if (parsed < 0)
+                    parsed = 0;
+                context->expectedContentLength = (size_t)parsed;
+                context->response->setContentLength(context->expectedContentLength);
+                bool storeBody = !(context->request->getNoStoreBody() && _bodyChunkCallback);
+                if (storeBody)
+                    context->response->reserveBody(context->expectedContentLength);
+            } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
+                context->chunked = true;
             }
-            lineStart = lineEnd + 2;
+        }
+        lineStart = lineEnd + 2;
     }
     return true;
 }
