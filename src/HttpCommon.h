@@ -11,7 +11,7 @@
 
 // Library version (single source of truth inside code). Keep in sync with library.json and library.properties.
 #ifndef ESP_ASYNC_WEB_CLIENT_VERSION
-#define ESP_ASYNC_WEB_CLIENT_VERSION "1.0.5"
+#define ESP_ASYNC_WEB_CLIENT_VERSION "1.0.6"
 #endif
 
 struct HttpHeader {
@@ -34,7 +34,9 @@ enum HttpClientError {
     BODY_STREAM_READ_FAILED = -8,
     ABORTED = -9,
     CONNECTION_CLOSED_MID_BODY = -10, // new explicit code to disambiguate body truncation
-    MAX_BODY_SIZE_EXCEEDED = -11
+    MAX_BODY_SIZE_EXCEEDED = -11,
+    TOO_MANY_REDIRECTS = -12,
+    HEADERS_TOO_LARGE = -13
 };
 
 inline const char* httpClientErrorToString(HttpClientError error) {
@@ -61,6 +63,10 @@ inline const char* httpClientErrorToString(HttpClientError error) {
         return "Connection closed mid-body";
     case MAX_BODY_SIZE_EXCEEDED:
         return "Body exceeds configured maximum";
+    case TOO_MANY_REDIRECTS:
+        return "Too many redirects";
+    case HEADERS_TOO_LARGE:
+        return "Response headers exceed configured maximum";
     default:
         return "Network error";
     }

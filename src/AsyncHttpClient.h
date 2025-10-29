@@ -66,6 +66,8 @@ class AsyncHttpClient {
     void setDefaultConnectTimeout(uint32_t ms) {
         _defaultConnectTimeout = ms;
     }
+    void setFollowRedirects(bool enable, uint8_t maxHops = 3);
+    void setMaxHeaderBytes(size_t maxBytes);
     void setMaxBodySize(size_t maxSize);
     void setMaxParallel(uint16_t maxParallel);
 
@@ -119,6 +121,8 @@ class AsyncHttpClient {
         bool awaitingFinalChunkTerminator;
         uint32_t id;
         size_t trailerLineCount;
+        uint8_t redirectCount;
+        bool notifiedEndCallback;
         // perRequestChunkCb removed
         uint32_t connectStartMs;
         uint32_t connectTimeoutMs;
@@ -131,7 +135,8 @@ class AsyncHttpClient {
             : request(nullptr), response(nullptr), client(nullptr), headersComplete(false), responseProcessed(false),
               expectedContentLength(0), receivedContentLength(0), chunked(false), chunkedComplete(false),
               currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), trailerLineCount(0),
-              connectStartMs(0), connectTimeoutMs(0), headersSent(false), streamingBodyInProgress(false)
+              redirectCount(0), notifiedEndCallback(false), connectStartMs(0), connectTimeoutMs(0), headersSent(false),
+              streamingBodyInProgress(false)
 #if !ASYNC_TCP_HAS_TIMEOUT
               ,
               timeoutTimer(0)
@@ -147,6 +152,9 @@ class AsyncHttpClient {
     uint32_t _nextRequestId = 1;
     uint16_t _maxParallel = 0; // 0 => unlimited
     size_t _maxBodySize = 0;   // 0 => unlimited
+    bool _followRedirects = false;
+    uint8_t _maxRedirectHops = 3;
+    size_t _maxHeaderBytes = 0;
     std::vector<RequestContext*> _activeRequests;
     std::vector<RequestContext*> _pendingQueue;
     uint32_t _defaultConnectTimeout = 5000;
@@ -168,6 +176,13 @@ class AsyncHttpClient {
     void processResponse(RequestContext* context);
     void cleanup(RequestContext* context);
     void triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage);
+    bool buildRedirectRequest(RequestContext* context, AsyncHttpRequest** outRequest, HttpClientError* outError,
+                              String* outErrorMessage);
+    bool handleRedirect(RequestContext* context);
+    String resolveRedirectUrl(const AsyncHttpRequest* request, const String& location) const;
+    bool isSameOrigin(const AsyncHttpRequest* original, const AsyncHttpRequest* redirect) const;
+    void resetContextForRedirect(RequestContext* context, AsyncHttpRequest* newRequest);
+    bool isRedirectStatus(int status) const;
     void tryDequeue();
     void sendStreamData(RequestContext* context);
     bool shouldEnforceBodyLimit(RequestContext* context);

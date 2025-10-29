@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cerrno>
+#include "UrlParser.h"
 
 static constexpr size_t kMaxChunkSizeLineLen = 64;
 static constexpr size_t kMaxChunkTrailerLineLen = 256;
@@ -11,7 +12,7 @@ static constexpr size_t kMaxChunkTrailerLines = 32;
 
 AsyncHttpClient::AsyncHttpClient()
     : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
-      _bodyChunkCallback(nullptr) {
+      _bodyChunkCallback(nullptr), _followRedirects(false), _maxRedirectHops(3), _maxHeaderBytes(0) {
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     // Create recursive mutex for shared containers when auto-loop may run in background
     _reqMutex = xSemaphoreCreateRecursiveMutex();
@@ -134,6 +135,21 @@ void AsyncHttpClient::setUserAgent(const char* userAgent) {
     unlock();
 }
 
+void AsyncHttpClient::setFollowRedirects(bool enable, uint8_t maxHops) {
+    lock();
+    _followRedirects = enable;
+    if (maxHops == 0)
+        maxHops = 1;
+    _maxRedirectHops = maxHops;
+    unlock();
+}
+
+void AsyncHttpClient::setMaxHeaderBytes(size_t maxBytes) {
+    lock();
+    _maxHeaderBytes = maxBytes;
+    unlock();
+}
+
 void AsyncHttpClient::setMaxBodySize(size_t maxSize) {
     lock();
     _maxBodySize = maxSize;
@@ -231,7 +247,9 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->client = new AsyncClient();
     context->connectStartMs = millis();
     lock();
-    _activeRequests.push_back(context);
+    bool alreadyTracked = std::find(_activeRequests.begin(), _activeRequests.end(), context) != _activeRequests.end();
+    if (!alreadyTracked)
+        _activeRequests.push_back(context);
     unlock();
 
     context->client->onConnect([this, context](void* arg, AsyncClient* c) { handleConnect(context, c); });
@@ -283,6 +301,14 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
 
     if (!context->headersComplete) {
         int headerEnd = context->responseBuffer.indexOf("\r\n\r\n");
+        if (_maxHeaderBytes > 0) {
+            size_t headerBytes = headerEnd != -1 ? static_cast<size_t>(headerEnd + 4)
+                                                 : static_cast<size_t>(context->responseBuffer.length());
+            if (headerBytes > _maxHeaderBytes) {
+                triggerError(context, HEADERS_TOO_LARGE, "Response headers exceed configured maximum");
+                return;
+            }
+        }
         if (headerEnd != -1) {
             String headerData = context->responseBuffer.substring(0, headerEnd);
             if (parseResponseHeaders(context, headerData)) {
@@ -293,6 +319,8 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                     return;
                 }
                 context->responseBuffer.remove(0, headerEnd + 4);
+                if (handleRedirect(context))
+                    return;
                 if (!context->chunked && context->responseBuffer.length() > 0) {
                     size_t incomingLen = context->responseBuffer.length();
                     if (wouldExceedLimit(incomingLen)) {
@@ -418,18 +446,19 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             triggerError(context, CHUNKED_DECODE_FAILED, "Chunk missing terminating CRLF");
             return;
         }
-        String chunkData = context->responseBuffer.substring(0, context->currentChunkRemaining);
-        if (wouldExceedLimit(chunkData.length())) {
+        size_t chunkLen = context->currentChunkRemaining;
+        if (wouldExceedLimit(chunkLen)) {
             triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
             return;
         }
+        const char* chunkPtr = context->responseBuffer.c_str();
         if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
-            context->response->appendBody(chunkData.c_str(), chunkData.length());
+            context->response->appendBody(chunkPtr, chunkLen);
         }
-        context->receivedContentLength += chunkData.length();
+        context->receivedContentLength += chunkLen;
         auto cb3 = _bodyChunkCallback;
         if (cb3)
-            cb3(chunkData.c_str(), chunkData.length(), false);
+            cb3(chunkPtr, chunkLen, false);
         context->responseBuffer.remove(0, needed);
         context->currentChunkRemaining = 0;
     }
@@ -442,9 +471,6 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                  context->receivedContentLength >= context->expectedContentLength)
             complete = true;
         if (complete) {
-            auto cb4 = _bodyChunkCallback;
-            if (cb4)
-                cb4(nullptr, 0, true);
             processResponse(context);
         }
     }
@@ -498,9 +524,6 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
         return;
     }
     // Otherwise success: either Content-Length reached, or no Content-Length and closure marks the end
-    auto cb = _bodyChunkCallback;
-    if (cb)
-        cb(nullptr, 0, true);
     processResponse(context);
 }
 
@@ -567,6 +590,13 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
 void AsyncHttpClient::processResponse(RequestContext* context) {
     if (context->responseProcessed)
         return;
+    if (handleRedirect(context))
+        return;
+    auto cb = _bodyChunkCallback;
+    if (cb && !context->notifiedEndCallback) {
+        context->notifiedEndCallback = true;
+        cb(nullptr, 0, true);
+    }
     context->responseProcessed = true;
     if (context->onSuccess)
         context->onSuccess(context->response);
@@ -606,6 +636,212 @@ void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError erro
     if (context->onError)
         context->onError(errorCode, errorMessage);
     cleanup(context);
+}
+
+bool AsyncHttpClient::isRedirectStatus(int status) const {
+    return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+}
+
+String AsyncHttpClient::resolveRedirectUrl(const AsyncHttpRequest* request, const String& location) const {
+    if (!request)
+        return String();
+    String loc = location;
+    loc.trim();
+    if (loc.length() == 0)
+        return String();
+    if (loc.startsWith("http://") || loc.startsWith("https://"))
+        return loc;
+
+    String base = request->isSecure() ? "https://" : "http://";
+    base += request->getHost();
+    uint16_t port = request->getPort();
+    bool defaultPort = request->isSecure() ? (port == 443) : (port == 80);
+    if (!defaultPort) {
+        base += ":";
+        base += String(port);
+    }
+
+    if (loc.startsWith("//")) {
+        return String(request->isSecure() ? "https:" : "http:") + loc;
+    }
+    String path = request->getPath();
+    if (!path.startsWith("/"))
+        path = "/" + path;
+    String pathNoQuery = path;
+    int queryIdx = pathNoQuery.indexOf('?');
+    if (queryIdx != -1)
+        pathNoQuery = pathNoQuery.substring(0, queryIdx);
+
+    if (loc.startsWith("/")) {
+        return base + loc;
+    }
+    if (loc.startsWith("?")) {
+        return base + pathNoQuery + loc;
+    }
+
+    int lastSlash = pathNoQuery.lastIndexOf('/');
+    String prefix;
+    if (lastSlash == -1) {
+        prefix = "/";
+    } else {
+        prefix = pathNoQuery.substring(0, lastSlash + 1);
+    }
+    return base + prefix + loc;
+}
+
+bool AsyncHttpClient::isSameOrigin(const AsyncHttpRequest* original, const AsyncHttpRequest* redirect) const {
+    if (!original || !redirect)
+        return false;
+    if (!original->getHost().equalsIgnoreCase(redirect->getHost()))
+        return false;
+    if (original->getPort() != redirect->getPort())
+        return false;
+    if (original->isSecure() != redirect->isSecure())
+        return false;
+    return true;
+}
+
+bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpRequest** outRequest,
+                                           HttpClientError* outError, String* outErrorMessage) {
+    if (outRequest)
+        *outRequest = nullptr;
+    if (outError)
+        *outError = CONNECTION_FAILED;
+    if (outErrorMessage)
+        *outErrorMessage = "";
+
+    if (!context || !_followRedirects || !context->response || !context->request)
+        return false;
+
+    int status = context->response->getStatusCode();
+    if (!isRedirectStatus(status))
+        return false;
+
+    String location = context->response->getHeader("Location");
+    if (location.length() == 0)
+        return false;
+
+    if (context->redirectCount >= _maxRedirectHops) {
+        if (outError)
+            *outError = TOO_MANY_REDIRECTS;
+        if (outErrorMessage)
+            *outErrorMessage = "Too many redirects";
+        return true;
+    }
+
+    String targetUrl = resolveRedirectUrl(context->request, location);
+    if (targetUrl.length() == 0)
+        return false;
+
+    HttpMethod newMethod = context->request->getMethod();
+    bool dropBody = false;
+    if (status == 301 || status == 302 || status == 303) {
+        newMethod = HTTP_GET;
+        dropBody = true;
+    }
+
+    AsyncHttpRequest* newRequest = new AsyncHttpRequest(newMethod, targetUrl);
+    newRequest->setTimeout(context->request->getTimeout());
+    newRequest->setNoStoreBody(context->request->getNoStoreBody());
+
+    bool sameOrigin = isSameOrigin(context->request, newRequest);
+    const auto& headers = context->request->getHeaders();
+    for (const auto& hdr : headers) {
+        if (hdr.name.equalsIgnoreCase("Content-Length"))
+            continue;
+        if (dropBody && hdr.name.equalsIgnoreCase("Content-Type"))
+            continue;
+        if (!sameOrigin &&
+            (hdr.name.equalsIgnoreCase("Authorization") || hdr.name.equalsIgnoreCase("Proxy-Authorization")))
+            continue;
+        newRequest->setHeader(hdr.name, hdr.value);
+    }
+
+    if (!dropBody) {
+        if (!context->request->getBody().isEmpty()) {
+            newRequest->setBody(context->request->getBody());
+        } else if (context->request->hasBodyStream()) {
+            delete newRequest;
+            return false; // cannot replay streamed bodies automatically
+        }
+    }
+
+    if (newRequest->isSecure()) {
+        delete newRequest;
+        if (outError)
+            *outError = HTTPS_NOT_SUPPORTED;
+        if (outErrorMessage)
+            *outErrorMessage = "Redirect to HTTPS not supported";
+        return true;
+    }
+
+    if (outRequest)
+        *outRequest = newRequest;
+    else
+        delete newRequest;
+
+    return true;
+}
+
+void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttpRequest* newRequest) {
+    if (!context)
+        return;
+    if (context->client) {
+        context->client->onConnect(nullptr);
+        context->client->onData(nullptr);
+        context->client->onDisconnect(nullptr);
+        context->client->onError(nullptr);
+#if ASYNC_TCP_HAS_TIMEOUT
+        context->client->onTimeout(nullptr);
+#endif
+        context->client->close();
+        delete context->client;
+        context->client = nullptr;
+    }
+    if (context->request) {
+        delete context->request;
+        context->request = nullptr;
+    }
+    if (context->response) {
+        delete context->response;
+        context->response = nullptr;
+    }
+    context->request = newRequest;
+    context->response = new AsyncHttpResponse();
+    context->responseBuffer = "";
+    context->headersComplete = false;
+    context->responseProcessed = false;
+    context->expectedContentLength = 0;
+    context->receivedContentLength = 0;
+    context->chunked = false;
+    context->chunkedComplete = false;
+    context->currentChunkRemaining = 0;
+    context->awaitingFinalChunkTerminator = false;
+    context->trailerLineCount = 0;
+    context->headersSent = false;
+    context->streamingBodyInProgress = false;
+    context->notifiedEndCallback = false;
+#if !ASYNC_TCP_HAS_TIMEOUT
+    context->timeoutTimer = millis();
+#endif
+    executeRequest(context);
+}
+
+bool AsyncHttpClient::handleRedirect(RequestContext* context) {
+    AsyncHttpRequest* newRequest = nullptr;
+    HttpClientError redirectError = CONNECTION_FAILED;
+    String errorMessage;
+    bool decision = buildRedirectRequest(context, &newRequest, &redirectError, &errorMessage);
+    if (!decision)
+        return false;
+    if (!newRequest) {
+        triggerError(context, redirectError, errorMessage.c_str());
+        return true;
+    }
+
+    context->redirectCount++;
+    resetContextForRedirect(context, newRequest);
+    return true;
 }
 
 void AsyncHttpClient::loop() {

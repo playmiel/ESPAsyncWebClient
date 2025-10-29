@@ -20,6 +20,8 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Configurable timeouts** - Set custom timeout values
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
 - ✅ **Chunked transfer decoding** - Validates framing and exposes parsed trailers
+- ✅ **Optional redirect following** - Follow 301/302/303 (converted to GET) and 307/308 (method preserved)
+- ✅ **Header & body guards** - Limit buffered response headers/body to avoid runaway responses
 
 > ⚠ Limitations: HTTPS not implemented; full body is buffered in memory (no zero-copy streaming yet).
 
@@ -139,6 +141,12 @@ void setTimeout(uint32_t timeout);
 // Set connect phase timeout distinct from total timeout
 void setDefaultConnectTimeout(uint32_t ms);
 
+// Follow HTTP redirects (max hops clamps to >=1). Disabled by default.
+void setFollowRedirects(bool enable, uint8_t maxHops = 3);
+
+// Abort if response headers exceed this many bytes (0 = unlimited)
+void setMaxHeaderBytes(size_t maxBytes);
+
 // Soft limit for buffered response bodies (bytes, 0 = unlimited)
 void setMaxBodySize(size_t maxBytes);
 
@@ -177,6 +185,16 @@ size_t getContentLength() const;
 bool isSuccess() const;    // 2xx status codes
 bool isRedirect() const;   // 3xx status codes
 bool isError() const;      // 4xx+ status codes
+```
+
+Example of reading decoded chunk trailers:
+
+```cpp
+client.get("http://example.com/chunked", [](AsyncHttpResponse* response) {
+    for (const auto& trailer : response->getTrailers()) {
+        Serial.printf("Trailer %s: %s\n", trailer.name.c_str(), trailer.value.c_str());
+    }
+});
 ```
 
 ### AsyncHttpRequest Class (Advanced Usage)
@@ -249,6 +267,23 @@ AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_GET, "http://example.com")
 request->setHeader("Authorization", "Bearer token");
 client.request(request, onSuccess);
 ```
+
+### Following Redirects
+
+```cpp
+client.setFollowRedirects(true, 3); // follow at most 3 hops
+
+client.post("http://example.com/login", "user=demo", [](AsyncHttpResponse* response) {
+    Serial.printf("Final location responded with %d\n", response->getStatusCode());
+});
+```
+
+- 301/302/303 responses switch to `GET` automatically (body dropped).
+- 307/308 keep the original method and body (stream bodies cannot be replayed automatically).
+- Sensitive headers (`Authorization`, `Proxy-Authorization`) are stripped when the redirect crosses hosts.
+- Redirects are triggered as soon as the headers arrive; the client skips downloading any subsequent 3xx body data.
+
+See `examples/arduino/NoStoreToSD/NoStoreToSD.ino` for a full download example using `setNoStoreBody(true)` and a global `onBodyChunk` handler that streams chunked and non-chunked responses to an SD card.
 
 ## Error Handling
 
@@ -334,6 +369,8 @@ If `Content-Length` is present, the response is considered complete once that ma
 
 Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` (default) to disable the guard.
 
+Likewise, guard against oversized or malicious header blocks via `client.setMaxHeaderBytes(limit)`. When the cumulative response headers exceed `limit` bytes before completion of `\r\n\r\n`, the request aborts with `HEADERS_TOO_LARGE`.
+
 ### Transfer-Encoding: chunked
 
 Chunked decoding validates frame boundaries and parses trailer headers for attachment to the response object.
@@ -371,7 +408,7 @@ Highlights / limitations:
 - No TLS (HTTPS rejected)
 - Chunked: trailers parsed and attached to `AsyncHttpResponse::getTrailers()`
 - Full in-memory buffering (guard with `setMaxBodySize` or use no-store + chunk callback)
-- No automatic redirects (3xx not followed)
+- Redirects disabled by default; opt-in via `client.setFollowRedirects(...)`
 - No long-lived keep-alive: default header `Connection: close`; no connection reuse currently.
 - Manual timeout loop required if AsyncTCP version lacks `setTimeout` (call `client.loop()` in `loop()`).
 - No specific content-encoding handling (gzip/deflate ignored if sent).
@@ -405,6 +442,8 @@ Single authoritative list (kept in sync with `HttpCommon.h`):
 | -9 | ABORTED | Aborted by user |
 | -10 | CONNECTION_CLOSED_MID_BODY | Connection closed after headers with body still missing bytes (truncated body) |
 | -11 | MAX_BODY_SIZE_EXCEEDED | Body exceeds configured maximum (`setMaxBodySize`) |
+| -12 | TOO_MANY_REDIRECTS | Redirect chain exceeded configured hop limit (`setFollowRedirects`) |
+| -13 | HEADERS_TOO_LARGE | Response headers exceeded configured limit (`setMaxHeaderBytes`) |
 | >0 | (AsyncTCP) | Not used: transport errors are mapped to CONNECTION_FAILED |
 
 Example mapping in a callback:
@@ -422,6 +461,8 @@ client.get("http://example.com",
           case CONNECTION_CLOSED_MID_BODY: Serial.println("Body truncated (closed mid-body)"); break;
           case REQUEST_TIMEOUT: Serial.println("Timeout"); break;
           case MAX_BODY_SIZE_EXCEEDED: Serial.println("Body exceeded guard"); break;
+          case TOO_MANY_REDIRECTS: Serial.println("Redirect loop detected"); break;
+          case HEADERS_TOO_LARGE: Serial.println("Headers exceeded guard"); break;
                     default: Serial.printf("Network error: %s (%d)\n", httpClientErrorToString(e), (int)e); break;
       }
   }
