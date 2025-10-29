@@ -215,4 +215,22 @@ jobs:
         run: |
           pytest -q test_parse_url.py
 
+  chunk-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade platformio
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+      - name: Run chunk parse tests
+        run: |
+          pio test -e esp32dev -f test_chunk_parse
+
     
