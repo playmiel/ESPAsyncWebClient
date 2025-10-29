@@ -135,8 +135,8 @@ class AsyncHttpClient {
             : request(nullptr), response(nullptr), client(nullptr), headersComplete(false), responseProcessed(false),
               expectedContentLength(0), receivedContentLength(0), chunked(false), chunkedComplete(false),
               currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), trailerLineCount(0),
-              redirectCount(0), notifiedEndCallback(false), connectStartMs(0), connectTimeoutMs(0),
-              headersSent(false), streamingBodyInProgress(false)
+              redirectCount(0), notifiedEndCallback(false), connectStartMs(0), connectTimeoutMs(0), headersSent(false),
+              streamingBodyInProgress(false)
 #if !ASYNC_TCP_HAS_TIMEOUT
               ,
               timeoutTimer(0)

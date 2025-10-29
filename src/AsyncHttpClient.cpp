@@ -247,8 +247,7 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->client = new AsyncClient();
     context->connectStartMs = millis();
     lock();
-    bool alreadyTracked =
-        std::find(_activeRequests.begin(), _activeRequests.end(), context) != _activeRequests.end();
+    bool alreadyTracked = std::find(_activeRequests.begin(), _activeRequests.end(), context) != _activeRequests.end();
     if (!alreadyTracked)
         _activeRequests.push_back(context);
     unlock();
@@ -291,13 +290,6 @@ void AsyncHttpClient::handleConnect(RequestContext* context, AsyncClient* client
 void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, char* data, size_t len) {
     context->responseBuffer.concat(data, len);
     bool enforceLimit = shouldEnforceBodyLimit(context);
-    if (!context->headersComplete && _maxHeaderBytes > 0) {
-        size_t buffered = static_cast<size_t>(context->responseBuffer.length());
-        if (buffered > _maxHeaderBytes) {
-            triggerError(context, HEADERS_TOO_LARGE, "Response headers exceed configured maximum");
-            return;
-        }
-    }
     auto wouldExceedLimit = [&](size_t incoming) -> bool {
         if (!enforceLimit)
             return false;
@@ -309,6 +301,14 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
 
     if (!context->headersComplete) {
         int headerEnd = context->responseBuffer.indexOf("\r\n\r\n");
+        if (_maxHeaderBytes > 0) {
+            size_t headerBytes = headerEnd != -1 ? static_cast<size_t>(headerEnd + 4)
+                                                 : static_cast<size_t>(context->responseBuffer.length());
+            if (headerBytes > _maxHeaderBytes) {
+                triggerError(context, HEADERS_TOO_LARGE, "Response headers exceed configured maximum");
+                return;
+            }
+        }
         if (headerEnd != -1) {
             String headerData = context->responseBuffer.substring(0, headerEnd);
             if (parseResponseHeaders(context, headerData)) {
@@ -751,8 +751,8 @@ bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpReq
             continue;
         if (dropBody && hdr.name.equalsIgnoreCase("Content-Type"))
             continue;
-        if (!sameOrigin && (hdr.name.equalsIgnoreCase("Authorization") ||
-                            hdr.name.equalsIgnoreCase("Proxy-Authorization")))
+        if (!sameOrigin &&
+            (hdr.name.equalsIgnoreCase("Authorization") || hdr.name.equalsIgnoreCase("Proxy-Authorization")))
             continue;
         newRequest->setHeader(hdr.name, hdr.value);
     }

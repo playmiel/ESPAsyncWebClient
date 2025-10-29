@@ -56,9 +56,7 @@ static void test_chunk_trailers_are_parsed() {
     ctx->headersComplete = true;
     ctx->chunked = true;
 
-    auto feed = [&](const char* data) {
-        client.handleData(ctx, nullptr, const_cast<char*>(data), strlen(data));
-    };
+    auto feed = [&](const char* data) { client.handleData(ctx, nullptr, const_cast<char*>(data), strlen(data)); };
 
     feed("4\r\n");
     feed("Wiki\r\n");
@@ -87,9 +85,7 @@ static void test_chunk_missing_crlf_is_error() {
     ctx->headersComplete = true;
     ctx->chunked = true;
 
-    auto feed = [&](const char* data) {
-        client.handleData(ctx, nullptr, const_cast<char*>(data), strlen(data));
-    };
+    auto feed = [&](const char* data) { client.handleData(ctx, nullptr, const_cast<char*>(data), strlen(data)); };
 
     feed("4\r\n");
     feed("Wiki\n"); // missing CR before LF terminator

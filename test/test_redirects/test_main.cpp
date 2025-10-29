@@ -128,6 +128,8 @@ static void test_redirect_to_https_not_supported() {
 
 static bool gHeaderErrorCalled = false;
 static HttpClientError gHeaderLastError = CONNECTION_FAILED;
+static bool gHeaderSuccessCalled = false;
+static String gHeaderLastBody;
 
 static void test_header_limit_triggers_error() {
     gHeaderErrorCalled = false;
@@ -151,6 +153,35 @@ static void test_header_limit_triggers_error() {
     TEST_ASSERT_EQUAL(HEADERS_TOO_LARGE, gHeaderLastError);
 }
 
+static void test_header_limit_allows_body_bytes_after_headers() {
+    gHeaderErrorCalled = false;
+    gHeaderLastError = CONNECTION_FAILED;
+    gHeaderSuccessCalled = false;
+    gHeaderLastBody = "";
+
+    AsyncHttpClient client;
+    client.setMaxHeaderBytes(48);
+    auto ctx = new AsyncHttpClient::RequestContext();
+    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/");
+    ctx->response = new AsyncHttpResponse();
+    ctx->onError = [](HttpClientError error, const char* message) {
+        (void)message;
+        gHeaderErrorCalled = true;
+        gHeaderLastError = error;
+    };
+    ctx->onSuccess = [](AsyncHttpResponse* resp) {
+        gHeaderSuccessCalled = true;
+        gHeaderLastBody = resp->getBody();
+    };
+
+    const char* frame = "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nHELLOWORLD";
+    client.handleData(ctx, nullptr, const_cast<char*>(frame), strlen(frame));
+
+    TEST_ASSERT_FALSE(gHeaderErrorCalled);
+    TEST_ASSERT_TRUE(gHeaderSuccessCalled);
+    TEST_ASSERT_EQUAL_STRING("HELLOWORLD", gHeaderLastBody.c_str());
+}
+
 void setup() {
     delay(2000);
     UNITY_BEGIN();
@@ -159,6 +190,7 @@ void setup() {
     RUN_TEST(test_redirect_too_many_hops);
     RUN_TEST(test_redirect_to_https_not_supported);
     RUN_TEST(test_header_limit_triggers_error);
+    RUN_TEST(test_header_limit_allows_body_bytes_after_headers);
     UNITY_END();
 }
 
