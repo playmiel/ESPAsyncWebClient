@@ -1,5 +1,4 @@
 .pio
-test/
 *.tmp
 *.log
 .vscode/
