@@ -194,7 +194,7 @@ jobs:
         if: ${{ hashFiles('test/**') != '' }}
         run: |
           echo "Detected test files:" $(ls test || true)
-          pio test -e native -v
+          pio test -e native -f test_urlparser_native -v
       - name: Skip notice (no tests found)
         if: ${{ hashFiles('test/**') == '' }}
         run: echo "No test directory present in this ref; skipping native tests."
@@ -231,6 +231,6 @@ jobs:
           key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
       - name: Build HTTP unit tests (no upload)
         run: |
-          pio test -e esp32dev -f test_chunk_parse -f test_redirects --without-upload --without-testing
+          pio test -e esp32dev -f test_chunk_parse -f test_redirects --without-uploading --without-testing
 
     
