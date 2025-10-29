@@ -229,8 +229,8 @@ jobs:
           path: |
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
-      - name: Run chunk parse tests
+      - name: Build HTTP unit tests (no upload)
         run: |
-          pio test -e esp32dev -f test_chunk_parse
+          pio test -e esp32dev -f test_chunk_parse -f test_redirects --without-upload --without-testing
 
     

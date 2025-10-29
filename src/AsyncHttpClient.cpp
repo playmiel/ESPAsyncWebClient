@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cerrno>
-#include <memory>
 #include "UrlParser.h"
 
 static constexpr size_t kMaxChunkSizeLineLen = 64;
@@ -320,6 +319,8 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                     return;
                 }
                 context->responseBuffer.remove(0, headerEnd + 4);
+                if (handleRedirect(context))
+                    return;
                 if (!context->chunked && context->responseBuffer.length() > 0) {
                     size_t incomingLen = context->responseBuffer.length();
                     if (wouldExceedLimit(incomingLen)) {
@@ -700,6 +701,88 @@ bool AsyncHttpClient::isSameOrigin(const AsyncHttpRequest* original, const Async
     return true;
 }
 
+bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpRequest** outRequest,
+                                           HttpClientError* outError, String* outErrorMessage) {
+    if (outRequest)
+        *outRequest = nullptr;
+    if (outError)
+        *outError = CONNECTION_FAILED;
+    if (outErrorMessage)
+        *outErrorMessage = "";
+
+    if (!context || !_followRedirects || !context->response || !context->request)
+        return false;
+
+    int status = context->response->getStatusCode();
+    if (!isRedirectStatus(status))
+        return false;
+
+    String location = context->response->getHeader("Location");
+    if (location.length() == 0)
+        return false;
+
+    if (context->redirectCount >= _maxRedirectHops) {
+        if (outError)
+            *outError = TOO_MANY_REDIRECTS;
+        if (outErrorMessage)
+            *outErrorMessage = "Too many redirects";
+        return true;
+    }
+
+    String targetUrl = resolveRedirectUrl(context->request, location);
+    if (targetUrl.length() == 0)
+        return false;
+
+    HttpMethod newMethod = context->request->getMethod();
+    bool dropBody = false;
+    if (status == 301 || status == 302 || status == 303) {
+        newMethod = HTTP_GET;
+        dropBody = true;
+    }
+
+    AsyncHttpRequest* newRequest = new AsyncHttpRequest(newMethod, targetUrl);
+    newRequest->setTimeout(context->request->getTimeout());
+    newRequest->setNoStoreBody(context->request->getNoStoreBody());
+
+    bool sameOrigin = isSameOrigin(context->request, newRequest);
+    const auto& headers = context->request->getHeaders();
+    for (const auto& hdr : headers) {
+        if (hdr.name.equalsIgnoreCase("Content-Length"))
+            continue;
+        if (dropBody && hdr.name.equalsIgnoreCase("Content-Type"))
+            continue;
+        if (!sameOrigin && (hdr.name.equalsIgnoreCase("Authorization") ||
+                            hdr.name.equalsIgnoreCase("Proxy-Authorization")))
+            continue;
+        newRequest->setHeader(hdr.name, hdr.value);
+    }
+
+    if (!dropBody) {
+        if (!context->request->getBody().isEmpty()) {
+            newRequest->setBody(context->request->getBody());
+        } else if (context->request->hasBodyStream()) {
+            delete newRequest;
+            return false; // cannot replay streamed bodies automatically
+        }
+    }
+
+    if (newRequest->isSecure()) {
+        delete newRequest;
+        if (outError)
+            *outError = HTTPS_NOT_SUPPORTED;
+        if (outErrorMessage)
+            *outErrorMessage = "Redirect to HTTPS not supported";
+        return true;
+    }
+
+    if (outRequest)
+        *outRequest = newRequest;
+    else
+        delete newRequest;
+
+    return true;
+}
+
 void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttpRequest* newRequest) {
     if (!context)
         return;
@@ -745,62 +828,19 @@ void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttp
 }
 
 bool AsyncHttpClient::handleRedirect(RequestContext* context) {
-    if (!context || !_followRedirects || !context->response || !context->request)
+    AsyncHttpRequest* newRequest = nullptr;
+    HttpClientError redirectError = CONNECTION_FAILED;
+    String errorMessage;
+    bool decision = buildRedirectRequest(context, &newRequest, &redirectError, &errorMessage);
+    if (!decision)
         return false;
-    int status = context->response->getStatusCode();
-    if (!isRedirectStatus(status))
-        return false;
-    String location = context->response->getHeader("Location");
-    if (location.length() == 0)
-        return false;
-    if (context->redirectCount >= _maxRedirectHops) {
-        triggerError(context, TOO_MANY_REDIRECTS, "Too many redirects");
-        return true;
-    }
-
-    String targetUrl = resolveRedirectUrl(context->request, location);
-    if (targetUrl.length() == 0)
-        return false;
-
-    HttpMethod newMethod = context->request->getMethod();
-    bool dropBody = false;
-    if (status == 301 || status == 302 || status == 303) {
-        newMethod = HTTP_GET;
-        dropBody = true;
-    }
-
-    std::unique_ptr<AsyncHttpRequest> newRequest(new AsyncHttpRequest(newMethod, targetUrl));
-    newRequest->setTimeout(context->request->getTimeout());
-    newRequest->setNoStoreBody(context->request->getNoStoreBody());
-
-    bool sameOrigin = isSameOrigin(context->request, newRequest.get());
-    const auto& headers = context->request->getHeaders();
-    for (const auto& hdr : headers) {
-        if (hdr.name.equalsIgnoreCase("Content-Length"))
-            continue;
-        if (dropBody && hdr.name.equalsIgnoreCase("Content-Type"))
-            continue;
-        if (!sameOrigin &&
-            (hdr.name.equalsIgnoreCase("Authorization") || hdr.name.equalsIgnoreCase("Proxy-Authorization")))
-            continue;
-        newRequest->setHeader(hdr.name, hdr.value);
-    }
-
-    if (!dropBody) {
-        if (!context->request->getBody().isEmpty()) {
-            newRequest->setBody(context->request->getBody());
-        } else if (context->request->hasBodyStream()) {
-            return false; // cannot replay streamed bodies automatically
-        }
-    }
-
-    if (newRequest->isSecure()) {
-        triggerError(context, HTTPS_NOT_SUPPORTED, "Redirect to HTTPS not supported");
+    if (!newRequest) {
+        triggerError(context, redirectError, errorMessage.c_str());
         return true;
     }
 
     context->redirectCount++;
-    resetContextForRedirect(context, newRequest.release());
+    resetContextForRedirect(context, newRequest);
     return true;
 }
 

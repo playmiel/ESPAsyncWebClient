@@ -176,6 +176,8 @@ class AsyncHttpClient {
     void processResponse(RequestContext* context);
     void cleanup(RequestContext* context);
     void triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage);
+    bool buildRedirectRequest(RequestContext* context, AsyncHttpRequest** outRequest, HttpClientError* outError,
+                              String* outErrorMessage);
     bool handleRedirect(RequestContext* context);
     String resolveRedirectUrl(const AsyncHttpRequest* request, const String& location) const;
     bool isSameOrigin(const AsyncHttpRequest* original, const AsyncHttpRequest* redirect) const;

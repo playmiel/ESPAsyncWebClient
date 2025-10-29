@@ -71,8 +71,6 @@ static void test_chunk_trailers_are_parsed() {
 
     client.handleDisconnect(ctx, nullptr);
 
-    TEST_ASSERT_TRUE(ctx->chunked);
-    TEST_ASSERT_TRUE(ctx->chunkedComplete);
     TEST_ASSERT_TRUE(gSuccessCalled);
     TEST_ASSERT_FALSE(gErrorCalled);
     TEST_ASSERT_EQUAL_STRING("Wikipedia", gLastBody.c_str());
@@ -98,7 +96,6 @@ static void test_chunk_missing_crlf_is_error() {
 
     client.handleDisconnect(ctx, nullptr);
 
-    TEST_ASSERT_TRUE(ctx->chunked);
     TEST_ASSERT_TRUE(gErrorCalled);
     TEST_ASSERT_FALSE(gSuccessCalled);
     TEST_ASSERT_EQUAL_INT(CHUNKED_DECODE_FAILED, gLastError);

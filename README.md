@@ -281,6 +281,7 @@ client.post("http://example.com/login", "user=demo", [](AsyncHttpResponse* respo
 - 301/302/303 responses switch to `GET` automatically (body dropped).
 - 307/308 keep the original method and body (stream bodies cannot be replayed automatically).
 - Sensitive headers (`Authorization`, `Proxy-Authorization`) are stripped when the redirect crosses hosts.
+- Redirects are triggered as soon as the headers arrive; the client skips downloading any subsequent 3xx body data.
 
 See `examples/arduino/NoStoreToSD/NoStoreToSD.ino` for a full download example using `setNoStoreBody(true)` and a global `onBodyChunk` handler that streams chunked and non-chunked responses to an SD card.
 
