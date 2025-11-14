@@ -10,6 +10,7 @@
 #include "HttpRequest.h"
 #include "HttpResponse.h"
 #include "HttpCommon.h"
+#include "AsyncTransport.h"
 #include <AsyncTCP.h>
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
 #include <freertos/FreeRTOS.h>
@@ -70,6 +71,15 @@ class AsyncHttpClient {
     void setMaxHeaderBytes(size_t maxBytes);
     void setMaxBodySize(size_t maxSize);
     void setMaxParallel(uint16_t maxParallel);
+    void setDefaultTlsConfig(const AsyncHttpTLSConfig& config);
+    void setTlsCACert(const char* pem);
+    void setTlsClientCert(const char* certPem, const char* privateKeyPem);
+    void setTlsFingerprint(const char* fingerprintHex);
+    void setTlsInsecure(bool allowInsecure);
+    void setTlsHandshakeTimeout(uint32_t timeoutMs);
+    AsyncHttpTLSConfig getDefaultTlsConfig() const {
+        return _defaultTlsConfig;
+    }
 
     // Advanced request method
     uint32_t request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
@@ -109,7 +119,7 @@ class AsyncHttpClient {
         AsyncHttpResponse* response;
         SuccessCallback onSuccess;
         ErrorCallback onError;
-        AsyncClient* client;
+        AsyncTransport* transport;
         String responseBuffer;
         bool headersComplete;
         bool responseProcessed;
@@ -132,7 +142,7 @@ class AsyncHttpClient {
         uint32_t timeoutTimer;
 #endif
         RequestContext()
-            : request(nullptr), response(nullptr), client(nullptr), headersComplete(false), responseProcessed(false),
+            : request(nullptr), response(nullptr), transport(nullptr), headersComplete(false), responseProcessed(false),
               expectedContentLength(0), receivedContentLength(0), chunked(false), chunkedComplete(false),
               currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), trailerLineCount(0),
               redirectCount(0), notifiedEndCallback(false), connectStartMs(0), connectTimeoutMs(0), headersSent(false),
@@ -158,6 +168,7 @@ class AsyncHttpClient {
     std::vector<RequestContext*> _activeRequests;
     std::vector<RequestContext*> _pendingQueue;
     uint32_t _defaultConnectTimeout = 5000;
+    AsyncHttpTLSConfig _defaultTlsConfig;
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
@@ -168,10 +179,10 @@ class AsyncHttpClient {
                          ErrorCallback onError);
     void executeOrQueue(RequestContext* context);
     void executeRequest(RequestContext* context);
-    void handleConnect(RequestContext* context, AsyncClient* client);
-    void handleData(RequestContext* context, AsyncClient* client, char* data, size_t len);
-    void handleDisconnect(RequestContext* context, AsyncClient* client);
-    void handleError(RequestContext* context, AsyncClient* client, int8_t error);
+    void handleConnect(RequestContext* context);
+    void handleData(RequestContext* context, char* data, size_t len);
+    void handleDisconnect(RequestContext* context);
+    void handleTransportError(RequestContext* context, HttpClientError error, const char* message);
     bool parseResponseHeaders(RequestContext* context, const String& headerData);
     void processResponse(RequestContext* context);
     void cleanup(RequestContext* context);
@@ -186,6 +197,8 @@ class AsyncHttpClient {
     void tryDequeue();
     void sendStreamData(RequestContext* context);
     bool shouldEnforceBodyLimit(RequestContext* context);
+    AsyncTransport* buildTransport(RequestContext* context);
+    AsyncHttpTLSConfig resolveTlsConfig(const AsyncHttpRequest* request) const;
 
   public:
     // Exposed publicly for tests and advanced internal usage

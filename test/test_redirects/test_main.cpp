@@ -106,7 +106,7 @@ static void test_redirect_too_many_hops() {
     cleanupContext(ctx);
 }
 
-static void test_redirect_to_https_not_supported() {
+static void test_redirect_to_https_supported() {
     AsyncHttpClient client;
     client.setFollowRedirects(true, 3);
     auto ctx = makeRedirectContext(HTTP_GET, "http://example.com/path");
@@ -119,9 +119,13 @@ static void test_redirect_to_https_not_supported() {
     bool decision = client.buildRedirectRequest(ctx, &newReq, &err, &message);
 
     TEST_ASSERT_TRUE(decision);
-    TEST_ASSERT_NULL(newReq);
-    TEST_ASSERT_EQUAL(HTTPS_NOT_SUPPORTED, err);
-    TEST_ASSERT_FALSE(message.isEmpty());
+    TEST_ASSERT_NOT_NULL(newReq);
+    TEST_ASSERT_TRUE(newReq->isSecure());
+    TEST_ASSERT_EQUAL_STRING("secure.example.com", newReq->getHost().c_str());
+    TEST_ASSERT_EQUAL(443, newReq->getPort());
+    TEST_ASSERT_TRUE(message.isEmpty());
+
+    delete newReq;
 
     cleanupContext(ctx);
 }
@@ -188,7 +192,7 @@ void setup() {
     RUN_TEST(test_redirect_same_host_get);
     RUN_TEST(test_redirect_cross_host_preserve_method_strip_auth);
     RUN_TEST(test_redirect_too_many_hops);
-    RUN_TEST(test_redirect_to_https_not_supported);
+    RUN_TEST(test_redirect_to_https_supported);
     RUN_TEST(test_header_limit_triggers_error);
     RUN_TEST(test_header_limit_allows_body_bytes_after_headers);
     UNITY_END();
