@@ -193,3 +193,9 @@ void AsyncHttpRequest::enableGzipAcceptEncoding(bool enable) {
         removeHeader("Accept-Encoding");
     }
 }
+
+void AsyncHttpRequest::setTlsConfig(const AsyncHttpTLSConfig& config) {
+    if (!_tlsConfig)
+        _tlsConfig.reset(new AsyncHttpTLSConfig());
+    *_tlsConfig = config;
+}
