@@ -471,10 +471,10 @@ bool AsyncTlsTransport::verifyFingerprint() {
         return false;
     uint8_t hash[32];
 #if defined(MBEDTLS_VERSION_NUMBER) && (MBEDTLS_VERSION_NUMBER >= 0x03000000)
-    mbedtls_sha256(peer->raw.p, peer->raw.len, hash, 0);
-#else
     if (mbedtls_sha256(peer->raw.p, peer->raw.len, hash, 0) != 0)
         return false;
+#else
+    mbedtls_sha256(peer->raw.p, peer->raw.len, hash, 0);
 #endif
     if (_fingerprintBytes.size() != sizeof(hash))
         return false;
