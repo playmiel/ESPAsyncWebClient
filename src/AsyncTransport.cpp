@@ -543,7 +543,7 @@ size_t AsyncTlsTransport::write(const char* data, size_t len) {
             continue;
         }
         if (rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE)
-            continue;
+            break; // socket not ready; let caller retry later
         fail(TLS_HANDSHAKE_FAILED, "TLS write failed", rc);
         break;
     }
