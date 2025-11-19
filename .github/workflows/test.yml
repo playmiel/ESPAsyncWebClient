@@ -115,13 +115,8 @@ jobs:
       matrix:
         include:
           - platform: esp32dev
-            framework-version: "espressif32@^6.0.0"
-            name: "Latest Stable (2.x)"
-          - platform: esp32dev
             framework-version: "espressif32"
-            platform-packages: "framework-arduinoespressif32 @ https://github.com/espressif/arduino-esp32.git#3.3.1"
-            name: "Arduino Core 3.3.1"
-    
+            name: "Latest Stable (2.x)"
     steps:
     - uses: actions/checkout@v4
     
