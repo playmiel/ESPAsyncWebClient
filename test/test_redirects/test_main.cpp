@@ -10,7 +10,7 @@ static AsyncHttpClient::RequestContext* makeRedirectContext(HttpMethod method, c
     auto ctx = new AsyncHttpClient::RequestContext();
     ctx->request = new AsyncHttpRequest(method, url);
     ctx->response = new AsyncHttpResponse();
-    ctx->client = nullptr;
+    ctx->transport = nullptr;
     ctx->headersComplete = true;
     return ctx;
 }
@@ -151,7 +151,7 @@ static void test_header_limit_triggers_error() {
     };
 
     const char* partialHeaders = "HTTP/1.1 200 OK\r\nX-Very-Long-Header: 0123456789012345678901234567890123456789";
-    client.handleData(ctx, nullptr, const_cast<char*>(partialHeaders), strlen(partialHeaders));
+    client.handleData(ctx, const_cast<char*>(partialHeaders), strlen(partialHeaders));
 
     TEST_ASSERT_TRUE(gHeaderErrorCalled);
     TEST_ASSERT_EQUAL(HEADERS_TOO_LARGE, gHeaderLastError);
@@ -179,7 +179,7 @@ static void test_header_limit_allows_body_bytes_after_headers() {
     };
 
     const char* frame = "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nHELLOWORLD";
-    client.handleData(ctx, nullptr, const_cast<char*>(frame), strlen(frame));
+    client.handleData(ctx, const_cast<char*>(frame), strlen(frame));
 
     TEST_ASSERT_FALSE(gHeaderErrorCalled);
     TEST_ASSERT_TRUE(gHeaderSuccessCalled);
