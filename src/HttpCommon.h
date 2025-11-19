@@ -26,8 +26,8 @@ struct AsyncHttpTLSConfig {
     String caCert;
     String clientCert;
     String clientPrivateKey;
-    String fingerprint;       // SHA-256 hex (colon optional)
-    bool insecure = false;    // true => skip CA verification
+    String fingerprint;                  // SHA-256 hex (colon optional)
+    bool insecure = false;               // true => skip CA verification
     uint32_t handshakeTimeoutMs = 12000; // fallback if not overridden
 };
 

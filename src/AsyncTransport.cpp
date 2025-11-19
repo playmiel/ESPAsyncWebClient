@@ -38,13 +38,14 @@ class AsyncTcpTransport : public AsyncTransport {
         _timeoutHandler = handler;
         _timeoutArg = arg;
         if (_client) {
-            _client->onTimeout([](void* arg, AsyncClient* c, uint32_t time) {
-                (void)c;
-                auto self = static_cast<AsyncTcpTransport*>(arg);
-                if (self->_timeoutHandler)
-                    self->_timeoutHandler(self->_timeoutArg, self, time);
-            },
-                               this);
+            _client->onTimeout(
+                [](void* arg, AsyncClient* c, uint32_t time) {
+                    (void)c;
+                    auto self = static_cast<AsyncTcpTransport*>(arg);
+                    if (self->_timeoutHandler)
+                        self->_timeoutHandler(self->_timeoutArg, self, time);
+                },
+                this);
         }
 #else
         (void)handler;
@@ -186,13 +187,14 @@ class AsyncTlsTransport : public AsyncTransport {
         _timeoutHandler = handler;
         _timeoutArg = arg;
         if (_client) {
-            _client->onTimeout([](void* arg, AsyncClient* c, uint32_t t) {
-                (void)c;
-                auto self = static_cast<AsyncTlsTransport*>(arg);
-                if (self->_timeoutHandler)
-                    self->_timeoutHandler(self->_timeoutArg, self, t);
-            },
-                               this);
+            _client->onTimeout(
+                [](void* arg, AsyncClient* c, uint32_t t) {
+                    (void)c;
+                    auto self = static_cast<AsyncTlsTransport*>(arg);
+                    if (self->_timeoutHandler)
+                        self->_timeoutHandler(self->_timeoutArg, self, t);
+                },
+                this);
         }
 #else
         (void)handler;
@@ -387,7 +389,8 @@ void AsyncTlsTransport::resetBuffers() {
 
 bool AsyncTlsTransport::setupSsl() {
     const char* pers = "ESPAsyncWebClientTLS";
-    int rc = mbedtls_ctr_drbg_seed(&_ctrDrbg, mbedtls_entropy_func, &_entropy, (const unsigned char*)pers, strlen(pers));
+    int rc =
+        mbedtls_ctr_drbg_seed(&_ctrDrbg, mbedtls_entropy_func, &_entropy, (const unsigned char*)pers, strlen(pers));
     if (rc != 0)
         return false;
     rc = mbedtls_ssl_config_defaults(&_sslConfig, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -395,10 +398,11 @@ bool AsyncTlsTransport::setupSsl() {
     if (rc != 0)
         return false;
     mbedtls_ssl_conf_rng(&_sslConfig, mbedtls_ctr_drbg_random, &_ctrDrbg);
-    mbedtls_ssl_conf_authmode(&_sslConfig, _config.insecure ? MBEDTLS_SSL_VERIFY_OPTIONAL : MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_authmode(&_sslConfig,
+                              _config.insecure ? MBEDTLS_SSL_VERIFY_OPTIONAL : MBEDTLS_SSL_VERIFY_REQUIRED);
     if (_config.caCert.length() > 0) {
-        rc = mbedtls_x509_crt_parse(&_caCert, (const unsigned char*)_config.caCert.c_str(),
-                                    _config.caCert.length() + 1);
+        rc =
+            mbedtls_x509_crt_parse(&_caCert, (const unsigned char*)_config.caCert.c_str(), _config.caCert.length() + 1);
         if (rc < 0)
             return false;
         mbedtls_ssl_conf_ca_chain(&_sslConfig, &_caCert, nullptr);
@@ -409,8 +413,9 @@ bool AsyncTlsTransport::setupSsl() {
         if (rc < 0)
             return false;
 #if defined(MBEDTLS_VERSION_NUMBER) && (MBEDTLS_VERSION_NUMBER >= 0x03000000)
-        rc = mbedtls_pk_parse_key(&_clientKey, (const unsigned char*)_config.clientPrivateKey.c_str(),
-                                  _config.clientPrivateKey.length() + 1, nullptr, 0, mbedtls_ctr_drbg_random, &_ctrDrbg);
+        rc =
+            mbedtls_pk_parse_key(&_clientKey, (const unsigned char*)_config.clientPrivateKey.c_str(),
+                                 _config.clientPrivateKey.length() + 1, nullptr, 0, mbedtls_ctr_drbg_random, &_ctrDrbg);
 #else
         rc = mbedtls_pk_parse_key(&_clientKey, (const unsigned char*)_config.clientPrivateKey.c_str(),
                                   _config.clientPrivateKey.length() + 1, nullptr, 0);
