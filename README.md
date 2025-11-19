@@ -23,8 +23,9 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Chunked transfer decoding** - Validates framing and exposes parsed trailers
 - ✅ **Optional redirect following** - Follow 301/302/303 (converted to GET) and 307/308 (method preserved)
 - ✅ **Header & body guards** - Limit buffered response headers/body to avoid runaway responses
+- ✅ **Zero-copy streaming** - Combine `req->setNoStoreBody(true)` with `client.onBodyChunk(...)` to stream large payloads without heap spikes
 
-> ⚠ Limitations: provide trust material for HTTPS (CA, fingerprint or insecure flag) and remember the full body is buffered in memory (no zero-copy streaming yet).
+> ⚠ Limitations: provide trust material for HTTPS (CA, fingerprint or insecure flag) and remember the full body is buffered in memory unless you opt into zero-copy streaming via `setNoStoreBody(true)`.
 
 ## Installation
 
@@ -544,7 +545,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Optional request queue limiting parallel connections (setMaxParallel)
 - Soft response buffering guard (`setMaxBodySize`) to fail fast on oversized payloads
 - Request ID return (all helper methods now return a uint32_t identifier)
-- No-store body mode: `req->setNoStoreBody(true)` to avoid buffering body when a chunk callback is used (final `(nullptr, 0, true)` event fired once)
+- Zero-copy streaming mode: call `req->setNoStoreBody(true)` and rely on `client.onBodyChunk(...)` to consume data without buffering (a final `(nullptr, 0, true)` event fires once)
 
 ### Gzip / Compression
 

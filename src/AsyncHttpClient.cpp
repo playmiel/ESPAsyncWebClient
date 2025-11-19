@@ -394,7 +394,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                         triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                         return;
                     }
-                    if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+                    if (!context->request->getNoStoreBody()) {
                         context->response->appendBody(context->responseBuffer.c_str(), incomingLen);
                     }
                     context->receivedContentLength += incomingLen;
@@ -413,7 +413,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
             return;
         }
-        if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+        if (!context->request->getNoStoreBody()) {
             context->response->appendBody(data, len);
         }
         context->receivedContentLength += len;
@@ -519,7 +519,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             return;
         }
         const char* chunkPtr = context->responseBuffer.c_str();
-        if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+        if (!context->request->getNoStoreBody()) {
             context->response->appendBody(chunkPtr, chunkLen);
         }
         context->receivedContentLength += chunkLen;
