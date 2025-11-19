@@ -113,10 +113,14 @@ jobs:
     
     strategy:
       matrix:
-        platform: [esp32dev]
-        framework-version: 
-          - "espressif32@^6.0.0"  # Latest stable
-          - "espressif32@^5.0.0"  # Previous version
+        include:
+          - platform: esp32dev
+            framework-version: "espressif32@^6.0.0"
+            name: "Latest Stable (2.x)"
+          - platform: esp32dev
+            framework-version: "espressif32"
+            platform-packages: "framework-arduinoespressif32 @ https://github.com/espressif/arduino-esp32.git#3.3.1"
+            name: "Arduino Core 3.3.1"
     
     steps:
     - uses: actions/checkout@v4
@@ -137,7 +141,7 @@ jobs:
           ~/.platformio/.cache
         key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
 
-    - name: Test with Arduino framework version
+    - name: Test with Arduino framework version ${{ matrix.name }}
       run: |
         mkdir -p /tmp/framework_test/lib/ESPAsyncWebClient
         mkdir -p /tmp/framework_test/src
@@ -160,6 +164,12 @@ jobs:
         }
         EOF
         
+        # Prepare platform_packages line if defined
+        PLATFORM_PACKAGES=""
+        if [ ! -z "${{ matrix.platform-packages }}" ]; then
+          PLATFORM_PACKAGES="platform_packages = ${{ matrix.platform-packages }}"
+        fi
+
         cat > /tmp/framework_test/platformio.ini << EOF
         [platformio]
         default_envs = esp32dev
@@ -168,6 +178,7 @@ jobs:
         platform = ${{ matrix.framework-version }}
         board = esp32dev
         framework = arduino
+        $PLATFORM_PACKAGES
         lib_deps = 
             https://github.com/ESP32Async/AsyncTCP.git
             bblanchon/ArduinoJson@^6.21.0
