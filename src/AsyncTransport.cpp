@@ -408,7 +408,7 @@ bool AsyncTlsTransport::setupSsl() {
                                     _config.clientCert.length() + 1);
         if (rc < 0)
             return false;
-#if defined(MBEDTLS_VERSION_MAJOR) && (MBEDTLS_VERSION_MAJOR >= 3)
+#if defined(MBEDTLS_VERSION_NUMBER) && (MBEDTLS_VERSION_NUMBER >= 0x03000000)
         rc = mbedtls_pk_parse_key(&_clientKey, (const unsigned char*)_config.clientPrivateKey.c_str(),
                                   _config.clientPrivateKey.length() + 1, nullptr, 0, mbedtls_ctr_drbg_random, &_ctrDrbg);
 #else
@@ -470,7 +470,7 @@ bool AsyncTlsTransport::verifyFingerprint() {
     if (!peer)
         return false;
     uint8_t hash[32];
-#if defined(MBEDTLS_VERSION_MAJOR) && (MBEDTLS_VERSION_MAJOR >= 3)
+#if defined(MBEDTLS_VERSION_NUMBER) && (MBEDTLS_VERSION_NUMBER >= 0x03000000)
     mbedtls_sha256(peer->raw.p, peer->raw.len, hash, 0);
 #else
     if (mbedtls_sha256(peer->raw.p, peer->raw.len, hash, 0) != 0)
