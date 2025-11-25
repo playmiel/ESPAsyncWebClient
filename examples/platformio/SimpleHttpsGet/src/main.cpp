@@ -58,14 +58,22 @@ void setup() {
         [](HttpClientError error, const char* message) {
             Serial.printf("Error: %s (%d)\n", message ? message : httpClientErrorToString(error), (int)error);
             switch (error) {
-                case TLS_CERT_INVALID: Serial.println("Cause: Missing/Wrong CA, expired cert or host mismatch"); break;
-                case TLS_FINGERPRINT_MISMATCH: Serial.println("Cause: SHA-256 fingerprint mismatch"); break;
-                case TLS_HANDSHAKE_TIMEOUT: Serial.println("Cause: Handshake too long (slow network?)"); break;
-                case TLS_HANDSHAKE_FAILED: Serial.println("Cause: TLS failure (parameters, ciphers)"); break;
-                default: break;
+            case TLS_CERT_INVALID:
+                Serial.println("Cause: Missing/Wrong CA, expired cert or host mismatch");
+                break;
+            case TLS_FINGERPRINT_MISMATCH:
+                Serial.println("Cause: SHA-256 fingerprint mismatch");
+                break;
+            case TLS_HANDSHAKE_TIMEOUT:
+                Serial.println("Cause: Handshake too long (slow network?)");
+                break;
+            case TLS_HANDSHAKE_FAILED:
+                Serial.println("Cause: TLS failure (parameters, ciphers)");
+                break;
+            default:
+                break;
             }
-        }
-    );
+        });
 }
 
 void loop() {
