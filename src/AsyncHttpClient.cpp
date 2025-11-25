@@ -163,6 +163,45 @@ void AsyncHttpClient::setMaxParallel(uint16_t maxParallel) {
     tryDequeue();
 }
 
+void AsyncHttpClient::setDefaultTlsConfig(const AsyncHttpTLSConfig& config) {
+    lock();
+    _defaultTlsConfig = config;
+    if (_defaultTlsConfig.handshakeTimeoutMs == 0)
+        _defaultTlsConfig.handshakeTimeoutMs = 12000;
+    unlock();
+}
+
+void AsyncHttpClient::setTlsCACert(const char* pem) {
+    lock();
+    _defaultTlsConfig.caCert = pem ? String(pem) : String();
+    unlock();
+}
+
+void AsyncHttpClient::setTlsClientCert(const char* certPem, const char* privateKeyPem) {
+    lock();
+    _defaultTlsConfig.clientCert = certPem ? String(certPem) : String();
+    _defaultTlsConfig.clientPrivateKey = privateKeyPem ? String(privateKeyPem) : String();
+    unlock();
+}
+
+void AsyncHttpClient::setTlsFingerprint(const char* fingerprintHex) {
+    lock();
+    _defaultTlsConfig.fingerprint = fingerprintHex ? String(fingerprintHex) : String();
+    unlock();
+}
+
+void AsyncHttpClient::setTlsInsecure(bool allowInsecure) {
+    lock();
+    _defaultTlsConfig.insecure = allowInsecure;
+    unlock();
+}
+
+void AsyncHttpClient::setTlsHandshakeTimeout(uint32_t timeoutMs) {
+    lock();
+    _defaultTlsConfig.handshakeTimeoutMs = timeoutMs;
+    unlock();
+}
+
 uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
                                       ErrorCallback onError) {
     // Snapshot global defaults under lock to avoid concurrent modification issues
@@ -196,11 +235,6 @@ uint32_t AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onS
     ctx->onError = onError;
     ctx->id = _nextRequestId++;
     ctx->connectTimeoutMs = _defaultConnectTimeout;
-    if (request->isSecure()) { // not supported yet
-        uint32_t id = ctx->id; // <-- memorize the id
-        triggerError(ctx, HTTPS_NOT_SUPPORTED, "HTTPS not implemented");
-        return id; // <-- return id
-    }
     executeOrQueue(ctx);
     return ctx->id;
 }
@@ -244,50 +278,83 @@ void AsyncHttpClient::executeOrQueue(RequestContext* context) {
 }
 
 void AsyncHttpClient::executeRequest(RequestContext* context) {
-    context->client = new AsyncClient();
     context->connectStartMs = millis();
+    context->transport = buildTransport(context);
+    if (!context->transport) {
+        triggerError(context, HTTPS_NOT_SUPPORTED, "HTTPS transport unavailable");
+        return;
+    }
     lock();
     bool alreadyTracked = std::find(_activeRequests.begin(), _activeRequests.end(), context) != _activeRequests.end();
     if (!alreadyTracked)
         _activeRequests.push_back(context);
     unlock();
 
-    context->client->onConnect([this, context](void* arg, AsyncClient* c) { handleConnect(context, c); });
-    context->client->onData(
-        [this, context](void* arg, AsyncClient* c, void* d, size_t l) { handleData(context, c, (char*)d, l); });
-    context->client->onDisconnect([this, context](void* arg, AsyncClient* c) { handleDisconnect(context, c); });
-    context->client->onError([this, context](void* arg, AsyncClient* c, int8_t e) { handleError(context, c, e); });
+    context->transport->setConnectHandler(
+        [this](void* arg, AsyncTransport* t) {
+            (void)t;
+            auto ctx = static_cast<RequestContext*>(arg);
+            handleConnect(ctx);
+        },
+        context);
+    context->transport->setDataHandler(
+        [this](void* arg, AsyncTransport* t, void* data, size_t len) {
+            (void)t;
+            auto ctx = static_cast<RequestContext*>(arg);
+            handleData(ctx, static_cast<char*>(data), len);
+        },
+        context);
+    context->transport->setDisconnectHandler(
+        [this](void* arg, AsyncTransport* t) {
+            (void)t;
+            auto ctx = static_cast<RequestContext*>(arg);
+            handleDisconnect(ctx);
+        },
+        context);
+    context->transport->setErrorHandler(
+        [this](void* arg, AsyncTransport* t, HttpClientError error, const char* message) {
+            (void)t;
+            auto ctx = static_cast<RequestContext*>(arg);
+            handleTransportError(ctx, error, message);
+        },
+        context);
 
 #if ASYNC_TCP_HAS_TIMEOUT
-    context->client->setTimeout(context->request->getTimeout());
-    context->client->onTimeout([this, context](void* arg, AsyncClient* c, uint32_t t) {
-        triggerError(context, REQUEST_TIMEOUT, "Request timeout");
-    });
+    context->transport->setTimeout(context->request->getTimeout());
+    context->transport->setTimeoutHandler(
+        [this](void* arg, AsyncTransport* transport, uint32_t t) {
+            (void)transport;
+            auto ctx = static_cast<RequestContext*>(arg);
+            triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
+        },
+        context);
 #else
     context->timeoutTimer = millis();
 #endif
 
-    if (!context->client->connect(context->request->getHost().c_str(), context->request->getPort())) {
+    if (!context->transport->connect(context->request->getHost().c_str(), context->request->getPort())) {
         triggerError(context, CONNECTION_FAILED, "Failed to initiate connection");
         return;
     }
 }
 
-void AsyncHttpClient::handleConnect(RequestContext* context, AsyncClient* client) {
+void AsyncHttpClient::handleConnect(RequestContext* context) {
+    if (!context || !context->transport)
+        return;
     if (context->request->hasBodyStream()) {
         String headers = context->request->buildHeadersOnly();
-        client->write(headers.c_str(), headers.length());
+        context->transport->write(headers.c_str(), headers.length());
         context->headersSent = true;
         context->streamingBodyInProgress = true;
         sendStreamData(context);
     } else {
         String full = context->request->buildHttpRequest();
-        client->write(full.c_str(), full.length());
+        context->transport->write(full.c_str(), full.length());
         context->headersSent = true;
     }
 }
 
-void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, char* data, size_t len) {
+void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len) {
     context->responseBuffer.concat(data, len);
     bool enforceLimit = shouldEnforceBodyLimit(context);
     auto wouldExceedLimit = [&](size_t incoming) -> bool {
@@ -327,7 +394,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
                         triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                         return;
                     }
-                    if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+                    if (!context->request->getNoStoreBody()) {
                         context->response->appendBody(context->responseBuffer.c_str(), incomingLen);
                     }
                     context->receivedContentLength += incomingLen;
@@ -346,7 +413,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
             return;
         }
-        if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+        if (!context->request->getNoStoreBody()) {
             context->response->appendBody(data, len);
         }
         context->receivedContentLength += len;
@@ -452,7 +519,7 @@ void AsyncHttpClient::handleData(RequestContext* context, AsyncClient* client, c
             return;
         }
         const char* chunkPtr = context->responseBuffer.c_str();
-        if (!(context->request->getNoStoreBody() && _bodyChunkCallback)) {
+        if (!context->request->getNoStoreBody()) {
             context->response->appendBody(chunkPtr, chunkLen);
         }
         context->receivedContentLength += chunkLen;
@@ -504,7 +571,7 @@ bool AsyncHttpClient::parseChunkSizeLine(const String& line, uint32_t* outSize) 
     return true;
 }
 
-void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* client) {
+void AsyncHttpClient::handleDisconnect(RequestContext* context) {
     if (context->responseProcessed)
         return;
     if (!context->headersComplete) {
@@ -527,21 +594,12 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context, AsyncClient* cli
     processResponse(context);
 }
 
-void AsyncHttpClient::handleError(RequestContext* context, AsyncClient* client, int8_t error) {
+void AsyncHttpClient::handleTransportError(RequestContext* context, HttpClientError error, const char* message) {
     if (context->responseProcessed)
         return;
-    // Clamp external AsyncTCP error (int8_t) into our negative range without colliding with defined enums
-    // AsyncClient error codes are typically small negatives, but ensure we only map to known ones; else generic.
-    HttpClientError mapped = CONNECTION_FAILED; // default generic mapping
-    switch (error) {
-    case -1:
-        mapped = CONNECTION_FAILED;
-        break;
-    default:
-        mapped = CONNECTION_FAILED;
-        break; // future: map more precisely if AsyncTCP exposes constants
-    }
-    triggerError(context, mapped, "Network error");
+    if (!message)
+        message = httpClientErrorToString(error);
+    triggerError(context, error, message);
 }
 
 bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String& headerData) {
@@ -604,17 +662,10 @@ void AsyncHttpClient::processResponse(RequestContext* context) {
 }
 
 void AsyncHttpClient::cleanup(RequestContext* context) {
-    if (context->client) {
-        // Detach callbacks to avoid any late invocation
-        context->client->onConnect(nullptr);
-        context->client->onData(nullptr);
-        context->client->onDisconnect(nullptr);
-        context->client->onError(nullptr);
-#if ASYNC_TCP_HAS_TIMEOUT
-        context->client->onTimeout(nullptr);
-#endif
-        context->client->close();
-        delete context->client;
+    if (context->transport) {
+        context->transport->close();
+        delete context->transport;
+        context->transport = nullptr;
     }
     if (context->request)
         delete context->request;
@@ -766,15 +817,6 @@ bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpReq
         }
     }
 
-    if (newRequest->isSecure()) {
-        delete newRequest;
-        if (outError)
-            *outError = HTTPS_NOT_SUPPORTED;
-        if (outErrorMessage)
-            *outErrorMessage = "Redirect to HTTPS not supported";
-        return true;
-    }
-
     if (outRequest)
         *outRequest = newRequest;
     else
@@ -786,17 +828,10 @@ bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpReq
 void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttpRequest* newRequest) {
     if (!context)
         return;
-    if (context->client) {
-        context->client->onConnect(nullptr);
-        context->client->onData(nullptr);
-        context->client->onDisconnect(nullptr);
-        context->client->onError(nullptr);
-#if ASYNC_TCP_HAS_TIMEOUT
-        context->client->onTimeout(nullptr);
-#endif
-        context->client->close();
-        delete context->client;
-        context->client = nullptr;
+    if (context->transport) {
+        context->transport->close();
+        delete context->transport;
+        context->transport = nullptr;
     }
     if (context->request) {
         delete context->request;
@@ -857,11 +892,20 @@ void AsyncHttpClient::loop() {
             lock();
         }
 #endif
-        if (!ctx->responseProcessed && ctx->client && !ctx->headersSent && ctx->connectTimeoutMs > 0 &&
+        if (!ctx->responseProcessed && ctx->transport && !ctx->headersSent && ctx->connectTimeoutMs > 0 &&
             (now - ctx->connectStartMs) > ctx->connectTimeoutMs) {
             unlock();
             triggerError(ctx, CONNECT_TIMEOUT, "Connect timeout");
             lock();
+        }
+        if (!ctx->responseProcessed && ctx->transport && ctx->transport->isHandshaking()) {
+            uint32_t hsTimeout = ctx->transport->getHandshakeTimeoutMs();
+            uint32_t hsStart = ctx->transport->getHandshakeStartMs();
+            if (hsTimeout > 0 && hsStart > 0 && (now - hsStart) > hsTimeout) {
+                unlock();
+                triggerError(ctx, TLS_HANDSHAKE_TIMEOUT, "TLS handshake timeout");
+                lock();
+            }
         }
         if (!ctx->responseProcessed && ctx->streamingBodyInProgress && ctx->request->hasBodyStream()) {
             unlock();
@@ -893,9 +937,9 @@ void AsyncHttpClient::tryDequeue() {
 }
 
 void AsyncHttpClient::sendStreamData(RequestContext* context) {
-    if (!context->client || !context->request->hasBodyStream())
+    if (!context->transport || !context->request->hasBodyStream())
         return;
-    if (!context->client->canSend())
+    if (!context->transport->canSend())
         return;
     auto provider = context->request->getBodyProvider();
     if (!provider)
@@ -908,7 +952,7 @@ void AsyncHttpClient::sendStreamData(RequestContext* context) {
         return;
     }
     if (written > 0)
-        context->client->write((const char*)temp, written);
+        context->transport->write((const char*)temp, written);
     if (final)
         context->streamingBodyInProgress = false;
 }
@@ -921,4 +965,39 @@ bool AsyncHttpClient::shouldEnforceBodyLimit(RequestContext* context) {
     if (context->request->getNoStoreBody() && _bodyChunkCallback)
         return false;
     return true;
+}
+
+AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* request) const {
+    AsyncHttpTLSConfig cfg = _defaultTlsConfig;
+    if (!request || !request->hasTlsConfig())
+        return cfg;
+    const AsyncHttpTLSConfig* overrideCfg = request->getTlsConfig();
+    if (!overrideCfg)
+        return cfg;
+    if (overrideCfg->caCert.length() > 0)
+        cfg.caCert = overrideCfg->caCert;
+    if (overrideCfg->clientCert.length() > 0)
+        cfg.clientCert = overrideCfg->clientCert;
+    if (overrideCfg->clientPrivateKey.length() > 0)
+        cfg.clientPrivateKey = overrideCfg->clientPrivateKey;
+    if (overrideCfg->fingerprint.length() > 0)
+        cfg.fingerprint = overrideCfg->fingerprint;
+    cfg.insecure = overrideCfg->insecure;
+    if (overrideCfg->handshakeTimeoutMs > 0)
+        cfg.handshakeTimeoutMs = overrideCfg->handshakeTimeoutMs;
+    if (cfg.handshakeTimeoutMs == 0)
+        cfg.handshakeTimeoutMs = _defaultTlsConfig.handshakeTimeoutMs;
+    return cfg;
+}
+
+AsyncTransport* AsyncHttpClient::buildTransport(RequestContext* context) {
+    if (!context || !context->request)
+        return nullptr;
+    if (context->request->isSecure()) {
+        AsyncHttpTLSConfig cfg = resolveTlsConfig(context->request);
+        if (cfg.handshakeTimeoutMs == 0)
+            cfg.handshakeTimeoutMs = _defaultTlsConfig.handshakeTimeoutMs;
+        return createTlsTransport(cfg);
+    }
+    return createTcpTransport();
 }

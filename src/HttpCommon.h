@@ -22,6 +22,15 @@ struct HttpHeader {
     HttpHeader(const String& n, const String& v) : name(n), value(v) {}
 };
 
+struct AsyncHttpTLSConfig {
+    String caCert;
+    String clientCert;
+    String clientPrivateKey;
+    String fingerprint;                  // SHA-256 hex (colon optional)
+    bool insecure = false;               // true => skip CA verification
+    uint32_t handshakeTimeoutMs = 12000; // fallback if not overridden
+};
+
 // Keep README.md "Error Codes" table in sync with this enum.
 enum HttpClientError {
     CONNECTION_FAILED = -1,
@@ -36,7 +45,11 @@ enum HttpClientError {
     CONNECTION_CLOSED_MID_BODY = -10, // new explicit code to disambiguate body truncation
     MAX_BODY_SIZE_EXCEEDED = -11,
     TOO_MANY_REDIRECTS = -12,
-    HEADERS_TOO_LARGE = -13
+    HEADERS_TOO_LARGE = -13,
+    TLS_HANDSHAKE_FAILED = -14,
+    TLS_CERT_INVALID = -15,
+    TLS_FINGERPRINT_MISMATCH = -16,
+    TLS_HANDSHAKE_TIMEOUT = -17
 };
 
 inline const char* httpClientErrorToString(HttpClientError error) {
@@ -50,7 +63,7 @@ inline const char* httpClientErrorToString(HttpClientError error) {
     case REQUEST_TIMEOUT:
         return "Request timeout";
     case HTTPS_NOT_SUPPORTED:
-        return "HTTPS not implemented";
+        return "HTTPS transport unavailable";
     case CHUNKED_DECODE_FAILED:
         return "Failed to decode chunked body";
     case CONNECT_TIMEOUT:
@@ -67,6 +80,14 @@ inline const char* httpClientErrorToString(HttpClientError error) {
         return "Too many redirects";
     case HEADERS_TOO_LARGE:
         return "Response headers exceed configured maximum";
+    case TLS_HANDSHAKE_FAILED:
+        return "TLS handshake failed";
+    case TLS_CERT_INVALID:
+        return "TLS certificate validation failed";
+    case TLS_FINGERPRINT_MISMATCH:
+        return "TLS fingerprint mismatch";
+    case TLS_HANDSHAKE_TIMEOUT:
+        return "TLS handshake timeout";
     default:
         return "Network error";
     }

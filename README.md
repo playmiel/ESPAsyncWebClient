@@ -7,11 +7,12 @@
 
 An asynchronous HTTP client library for ESP32 microcontrollers, built on top of AsyncTCP. This library provides a simple and efficient way to make HTTP requests without blocking your main program execution.
 
-> ⚠️ **HTTPS Warning**: Real TLS/HTTPS is NOT implemented yet. `https://` URLs are rejected with `HTTPS_NOT_SUPPORTED`. Do not use this library for sensitive data until TLS support is added.
+> 🔐 **HTTPS Ready**: TLS/HTTPS is available via AsyncTCP + mbedTLS. Load a CA certificate or fingerprint before talking to real servers, or call `client.setTlsInsecure(true)` only for testing. See the *HTTPS / TLS configuration* section below.
 
 ## Features
 
 - ✅ **Asynchronous HTTP requests** - Non-blocking HTTP operations
+- ✅ **HTTPS / TLS** - AsyncTCP + mbedTLS with CA, fingerprint and mutual-auth options
 - ✅ **Multiple HTTP methods** - GET, POST, PUT, DELETE, HEAD, PATCH support
 - ✅ **Custom headers** - Set global and per-request headers
 - ✅ **Callback-based responses** - Success and error callbacks
@@ -22,8 +23,9 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Chunked transfer decoding** - Validates framing and exposes parsed trailers
 - ✅ **Optional redirect following** - Follow 301/302/303 (converted to GET) and 307/308 (method preserved)
 - ✅ **Header & body guards** - Limit buffered response headers/body to avoid runaway responses
+- ✅ **Zero-copy streaming** - Combine `req->setNoStoreBody(true)` with `client.onBodyChunk(...)` to stream large payloads without heap spikes
 
-> ⚠ Limitations: HTTPS not implemented; full body is buffered in memory (no zero-copy streaming yet).
+> ⚠ Limitations: provide trust material for HTTPS (CA, fingerprint or insecure flag) and remember the full body is buffered in memory unless you opt into zero-copy streaming via `setNoStoreBody(true)`.
 
 ## Installation
 
@@ -381,9 +383,25 @@ Highlights / limitations:
 - Chunk extensions are ignored but accepted
 - Strict CRLF framing is required; malformed chunks raise `CHUNKED_DECODE_FAILED`
 
-### HTTPS (not supported)
+### HTTPS / TLS configuration
 
-`https://` URLs return `HTTPS_NOT_SUPPORTED`. To add TLS later, wrap or replace `AsyncClient` with a secure implementation.
+`https://` URLs now use the built-in AsyncTCP + mbedTLS transport. Supply trust material before making real requests:
+
+- `client.setTlsCACert(caPem)` — load a PEM CA chain (null-terminated). Mandatory unless using fingerprint pinning or `setTlsInsecure(true)`.
+- `client.setTlsClientCert(certPem, keyPem)` — optional mutual-TLS credentials (PEM).
+- `client.setTlsFingerprint("AA:BB:...")` — 32-byte SHA-256 fingerprint pinning. Validated after the handshake in addition to CA checks.
+- `client.setTlsInsecure(true)` — disable CA validation (development only; do not ship with this enabled).
+- `client.setTlsHandshakeTimeout(ms)` — default is 12s; tune for slow networks.
+
+Per-request overrides are available via `AsyncHttpRequest::setTlsConfig(const AsyncHttpTLSConfig&)` when a particular destination needs a different CA or timeout.
+
+Common HTTPS errors:
+
+- `TLS_HANDSHAKE_FAILED` — TCP issues or protocol alerts during the handshake.
+- `TLS_CERT_INVALID` — CA verification failed (missing root, expired cert, wrong host).
+- `TLS_FINGERPRINT_MISMATCH` — fingerprint pinning rejected the peer certificate.
+- `TLS_HANDSHAKE_TIMEOUT` — handshake exceeded the configured timeout.
+- `HTTPS_NOT_SUPPORTED` — only triggered if the binary is built without TLS support (non-ESP32 targets).
 
 ## Thread Safety
 
@@ -405,7 +423,7 @@ Highlights / limitations:
 
 ## Current Limitations (summary)
 
-- No TLS (HTTPS rejected)
+- TLS requires explicit trust material (CA certificate, fingerprint, or insecure mode)
 - Chunked: trailers parsed and attached to `AsyncHttpResponse::getTrailers()`
 - Full in-memory buffering (guard with `setMaxBodySize` or use no-store + chunk callback)
 - Redirects disabled by default; opt-in via `client.setFollowRedirects(...)`
@@ -435,7 +453,7 @@ Single authoritative list (kept in sync with `HttpCommon.h`):
 | -2 | HEADER_PARSE_FAILED | Invalid HTTP response headers |
 | -3 | CONNECTION_CLOSED | Connection closed before headers received |
 | -4 | REQUEST_TIMEOUT | Total request timeout exceeded |
-| -5 | HTTPS_NOT_SUPPORTED | HTTPS not supported yet |
+| -5 | HTTPS_NOT_SUPPORTED | TLS/HTTPS transport unavailable (unsupported target) |
 | -6 | CHUNKED_DECODE_FAILED | Failed to decode chunked body |
 | -7 | CONNECT_TIMEOUT | Connect phase timeout |
 | -8 | BODY_STREAM_READ_FAILED | Body streaming provider failed |
@@ -444,6 +462,10 @@ Single authoritative list (kept in sync with `HttpCommon.h`):
 | -11 | MAX_BODY_SIZE_EXCEEDED | Body exceeds configured maximum (`setMaxBodySize`) |
 | -12 | TOO_MANY_REDIRECTS | Redirect chain exceeded configured hop limit (`setFollowRedirects`) |
 | -13 | HEADERS_TOO_LARGE | Response headers exceeded configured limit (`setMaxHeaderBytes`) |
+| -14 | TLS_HANDSHAKE_FAILED | TLS handshake or channel failure |
+| -15 | TLS_CERT_INVALID | TLS certificate validation failed |
+| -16 | TLS_FINGERPRINT_MISMATCH | TLS fingerprint pinning rejected the peer certificate |
+| -17 | TLS_HANDSHAKE_TIMEOUT | TLS handshake exceeded the configured timeout |
 | >0 | (AsyncTCP) | Not used: transport errors are mapped to CONNECTION_FAILED |
 
 Example mapping in a callback:
@@ -523,7 +545,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Optional request queue limiting parallel connections (setMaxParallel)
 - Soft response buffering guard (`setMaxBodySize`) to fail fast on oversized payloads
 - Request ID return (all helper methods now return a uint32_t identifier)
-- No-store body mode: `req->setNoStoreBody(true)` to avoid buffering body when a chunk callback is used (final `(nullptr, 0, true)` event fired once)
+- Zero-copy streaming mode: call `req->setNoStoreBody(true)` and rely on `client.onBodyChunk(...)` to consume data without buffering (a final `(nullptr, 0, true)` event fires once)
 
 ### Gzip / Compression
 
@@ -533,9 +555,13 @@ The library DOES NOT yet decompress gzip payloads. If you don't want compressed 
 Important: calling `enableGzipAcceptEncoding(false)` does not remove the header if it was already added earlier on the same request instance. Create a new request without enabling it to avoid sending the header.
 A future optional flag (`ASYNC_HTTP_ENABLE_GZIP_DECODE`) may add a tiny inflater (miniz/zlib) after flash/RAM impact is evaluated.
 
-### HTTPS (Not Supported Yet)
+### HTTPS quick reference
 
-HTTPS is not implemented. Any `https://` URL returns `HTTPS_NOT_SUPPORTED`. A future drop-in TLS client (replacing `AsyncClient`) is planned without breaking the public API.
+- Call `client.setTlsCACert(caPem)` (or `request->setTlsConfig(...)`) before talking to production endpoints.
+- Use `client.setTlsInsecure(true)` only during development when no CA/fingerprint is available.
+- Fingerprint pinning (SHA-256) is optional via `client.setTlsFingerprint`.
+- Mutual TLS is supported via `client.setTlsClientCert(certPem, keyPem)`.
+- Errors are surfaced via `TLS_*` codes in the error callback; see the table below.
 
 ### Advanced Example
 

@@ -4,9 +4,12 @@
 #include <Arduino.h>
 #include <vector>
 #include <functional>
+#include <memory>
 #include "HttpCommon.h"
 
 enum HttpMethod { HTTP_GET, HTTP_POST, HTTP_PUT, HTTP_DELETE, HTTP_HEAD, HTTP_PATCH };
+
+struct AsyncHttpTLSConfig;
 
 class AsyncHttpRequest {
   public:
@@ -106,6 +109,14 @@ class AsyncHttpRequest {
         return _noStoreBody;
     }
 
+    void setTlsConfig(const AsyncHttpTLSConfig& config);
+    bool hasTlsConfig() const {
+        return _tlsConfig != nullptr;
+    }
+    const AsyncHttpTLSConfig* getTlsConfig() const {
+        return _tlsConfig.get();
+    }
+
     // (Per-request response chunk callback removed – use global client.onBodyChunk)
 
   private:
@@ -124,6 +135,7 @@ class AsyncHttpRequest {
     bool _queryFinalized = true;
     bool _acceptGzip = false;
     bool _noStoreBody = false;
+    std::unique_ptr<AsyncHttpTLSConfig> _tlsConfig;
 
     String methodToString() const;
 };

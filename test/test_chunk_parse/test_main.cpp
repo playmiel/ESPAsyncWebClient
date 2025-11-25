@@ -34,7 +34,7 @@ static AsyncHttpClient::RequestContext* makeContext(AsyncHttpClient& client) {
     auto ctx = new AsyncHttpClient::RequestContext();
     ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/res");
     ctx->response = new AsyncHttpResponse();
-    ctx->client = nullptr;
+    ctx->transport = nullptr;
     ctx->onSuccess = [](AsyncHttpResponse* resp) {
         gSuccessCalled = true;
         gLastBody = resp->getBody();
@@ -56,7 +56,7 @@ static void test_chunk_trailers_are_parsed() {
     ctx->headersComplete = true;
     ctx->chunked = true;
 
-    auto feed = [&](const char* data) { client.handleData(ctx, nullptr, const_cast<char*>(data), strlen(data)); };
+    auto feed = [&](const char* data) { client.handleData(ctx, const_cast<char*>(data), strlen(data)); };
 
     feed("4\r\n");
     feed("Wiki\r\n");
@@ -67,7 +67,7 @@ static void test_chunk_trailers_are_parsed() {
     feed("X-Meta: done\r\n");
     feed("\r\n");
 
-    client.handleDisconnect(ctx, nullptr);
+    client.handleDisconnect(ctx);
 
     TEST_ASSERT_TRUE(gSuccessCalled);
     TEST_ASSERT_FALSE(gErrorCalled);
@@ -85,12 +85,12 @@ static void test_chunk_missing_crlf_is_error() {
     ctx->headersComplete = true;
     ctx->chunked = true;
 
-    auto feed = [&](const char* data) { client.handleData(ctx, nullptr, const_cast<char*>(data), strlen(data)); };
+    auto feed = [&](const char* data) { client.handleData(ctx, const_cast<char*>(data), strlen(data)); };
 
     feed("4\r\n");
     feed("Wiki\n"); // missing CR before LF terminator
 
-    client.handleDisconnect(ctx, nullptr);
+    client.handleDisconnect(ctx);
 
     TEST_ASSERT_TRUE(gErrorCalled);
     TEST_ASSERT_FALSE(gSuccessCalled);
@@ -109,7 +109,7 @@ static void test_chunk_body_limit_enforced() {
                      "6\r\nTooBig\r\n"
                      "0\r\n\r\n";
 
-    client.handleData(ctx, nullptr, const_cast<char*>(payload.c_str()), payload.length());
+    client.handleData(ctx, const_cast<char*>(payload.c_str()), payload.length());
 
     TEST_ASSERT_TRUE(gErrorCalled);
     TEST_ASSERT_FALSE(gSuccessCalled);
