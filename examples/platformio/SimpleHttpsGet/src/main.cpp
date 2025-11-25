@@ -3,8 +3,8 @@
 #include <ESPAsyncWebClient.h>
 
 // Set your SSID/Password
-static const char* WIFI_SSID = "your-ssid";
-static const char* WIFI_PASS = "your-password";
+static const char* WIFI_SSID = "YOUR_SSID";
+static const char* WIFI_PASS = "YOUR_PASSWORD";
 
 // HTTPS test URL (returns JSON)
 static const char* TEST_URL = "https://httpbin.org/get";
@@ -22,7 +22,7 @@ static const bool USE_INSECURE = true; // set to false if you provide caPem abov
 
 void setup() {
     Serial.begin(115200);
-    delay(200);
+    delay(2000);
     Serial.println();
     Serial.println("[HTTPS demo] Boot");
 
