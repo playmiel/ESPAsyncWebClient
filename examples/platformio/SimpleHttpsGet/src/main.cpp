@@ -7,7 +7,7 @@ static const char* WIFI_SSID = "YOUR_SSID";
 static const char* WIFI_PASS = "YOUR_PASSWORD";
 
 // HTTPS test URL (returns JSON)
-static const char* TEST_URL = "https://httpbin.org/get";
+static const char* TEST_URL = "https://jsonplaceholder.typicode.com/todos/1";
 
 AsyncHttpClient client;
 
