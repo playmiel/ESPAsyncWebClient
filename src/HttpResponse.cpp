@@ -32,7 +32,6 @@ void AsyncHttpResponse::setHeader(const String& name, const String& value) {
             return;
         }
     }
-    // Add new header
     _headers.push_back(HttpHeader(name, value));
 }
 

@@ -1,4 +1,4 @@
-// New enhanced implementation
+
 
 #include "AsyncHttpClient.h"
 #include <algorithm>

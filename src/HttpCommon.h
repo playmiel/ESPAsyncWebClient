@@ -31,7 +31,6 @@ struct AsyncHttpTLSConfig {
     uint32_t handshakeTimeoutMs = 12000; // fallback if not overridden
 };
 
-// Keep README.md "Error Codes" table in sync with this enum.
 enum HttpClientError {
     CONNECTION_FAILED = -1,
     HEADER_PARSE_FAILED = -2,
@@ -42,7 +41,7 @@ enum HttpClientError {
     CONNECT_TIMEOUT = -7,
     BODY_STREAM_READ_FAILED = -8,
     ABORTED = -9,
-    CONNECTION_CLOSED_MID_BODY = -10, // new explicit code to disambiguate body truncation
+    CONNECTION_CLOSED_MID_BODY = -10, 
     MAX_BODY_SIZE_EXCEEDED = -11,
     TOO_MANY_REDIRECTS = -12,
     HEADERS_TOO_LARGE = -13,
