@@ -16,7 +16,7 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Multiple HTTP methods** - GET, POST, PUT, DELETE, HEAD, PATCH support
 - ✅ **Custom headers** - Set global and per-request headers
 - ✅ **Callback-based responses** - Success and error callbacks
-- ✅ **ESP32 only** – (ESP8266 support removed since 1.0.1)
+- ✅ **ESP32 only** – Arduino-ESP32 core 3.x required (core 2.x dropped; ESP8266 removed since 1.0.1)
 - ✅ **Simple API** - Easy to use with minimal setup
 - ✅ **Configurable timeouts** - Set custom timeout values
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
@@ -37,6 +37,8 @@ Add to your `platformio.ini`:
 lib_deps = 
     https://github.com/ESP32Async/AsyncTCP.git
     https://github.com/playmiel/ESPAsyncWebClient.git
+platform_packages =
+    framework-arduinoespressif32@^3
 ```
 
 ### Arduino IDE
@@ -45,6 +47,7 @@ lib_deps =
 2. In Arduino IDE: Sketch → Include Library → Add .ZIP Library
 3. Install the dependencies:
    - For ESP32: [AsyncTCP by ESP32Async](https://github.com/ESP32Async/AsyncTCP)
+4. Make sure you have the ESP32 Arduino core 3.x installed from the Boards Manager (core 2.x is not supported)
 
 
 ## Quick Start

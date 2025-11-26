@@ -76,6 +76,8 @@ jobs:
         
         [env]
         framework = arduino
+        platform_packages =
+            framework-arduinoespressif32@^3
         lib_deps = 
             ${{ matrix.async-tcp-repo }}
             bblanchon/ArduinoJson@^6.21.0
@@ -116,7 +118,8 @@ jobs:
         include:
           - platform: esp32dev
             framework-version: "espressif32"
-            name: "Latest Stable (2.x)"
+            platform-packages: "framework-arduinoespressif32@^3"
+            name: "ESP32 Arduino Core 3.x"
     steps:
     - uses: actions/checkout@v4
     
