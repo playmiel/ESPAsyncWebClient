@@ -415,7 +415,7 @@ Common HTTPS errors:
 ## Dependencies
 
 - **ESP32**: [AsyncTCP by ESP32Async](https://github.com/ESP32Async/AsyncTCP)
-- **Arduino Core**: ESP32 (v2.0+)
+- **Arduino Core**: ESP32 (v3.0+)
 
 > **Note**: ESP8266 was mentioned in early docs but is no longer supported as of 1.0.1. The code exclusively targets AsyncTCP (ESP32).
 
