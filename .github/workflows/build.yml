@@ -110,6 +110,8 @@ jobs:
         
         [env]
         framework = arduino
+        platform_packages =
+            framework-arduinoespressif32@^3
         build_flags = 
             -DCOMPILE_TEST_ONLY
             -Wall
