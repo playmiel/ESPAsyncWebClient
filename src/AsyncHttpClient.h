@@ -80,6 +80,9 @@ class AsyncHttpClient {
     AsyncHttpTLSConfig getDefaultTlsConfig() const {
         return _defaultTlsConfig;
     }
+    void clearCookies();
+    void setCookie(const char* name, const char* value, const char* path = "/", const char* domain = nullptr,
+                   bool secure = false);
 
     // Advanced request method
     uint32_t request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
@@ -199,6 +202,19 @@ class AsyncHttpClient {
     bool shouldEnforceBodyLimit(RequestContext* context);
     AsyncTransport* buildTransport(RequestContext* context);
     AsyncHttpTLSConfig resolveTlsConfig(const AsyncHttpRequest* request) const;
+    struct StoredCookie {
+        String name;
+        String value;
+        String domain;
+        String path;
+        bool secure = false;
+    };
+    std::vector<StoredCookie> _cookies;
+    void applyCookies(AsyncHttpRequest* request);
+    void storeResponseCookie(const AsyncHttpRequest* request, const String& setCookieValue);
+    bool cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request) const;
+    bool domainMatches(const String& cookieDomain, const String& host) const;
+    bool pathMatches(const String& cookiePath, const String& requestPath) const;
 
   public:
     // Exposed publicly for tests and advanced internal usage

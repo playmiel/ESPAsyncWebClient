@@ -16,6 +16,7 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Multiple HTTP methods** - GET, POST, PUT, DELETE, HEAD, PATCH support
 - ✅ **Custom headers** - Set global and per-request headers
 - ✅ **Callback-based responses** - Success and error callbacks
+- ✅ **Automatic cookies** - Captures `Set-Cookie` responses and replays them via `Cookie` on matching requests
 - ✅ **ESP32 only** – Arduino-ESP32 core 3.x required (core 2.x dropped; ESP8266 removed since 1.0.1)
 - ✅ **Simple API** - Easy to use with minimal setup
 - ✅ **Configurable timeouts** - Set custom timeout values
@@ -160,6 +161,11 @@ void setMaxParallel(uint16_t maxParallel);
 
 // Set User-Agent string
 void setUserAgent(const char* userAgent);
+
+// Cookie jar helpers
+void clearCookies();
+void setCookie(const char* name, const char* value, const char* path = "/", const char* domain = nullptr,
+               bool secure = false);
 ```
 
 #### Callback Types

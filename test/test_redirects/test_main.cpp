@@ -186,6 +186,46 @@ static void test_header_limit_allows_body_bytes_after_headers() {
     TEST_ASSERT_EQUAL_STRING("HELLOWORLD", gHeaderLastBody.c_str());
 }
 
+static void test_cookie_roundtrip_basic() {
+    AsyncHttpClient client;
+    auto ctx = new AsyncHttpClient::RequestContext();
+    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/login");
+    ctx->response = new AsyncHttpResponse();
+
+    String frame = "HTTP/1.1 200 OK\r\nSet-Cookie: session=abc123; Path=/\r\nContent-Length: 0\r\n\r\n";
+    TEST_ASSERT_TRUE(client.parseResponseHeaders(ctx, frame));
+
+    AsyncHttpRequest follow(HTTP_GET, "http://example.com/home");
+    client.applyCookies(&follow);
+    TEST_ASSERT_EQUAL_STRING("session=abc123", follow.getHeader("Cookie").c_str());
+
+    cleanupContext(ctx);
+}
+
+static void test_cookie_path_and_secure_rules() {
+    AsyncHttpClient client;
+    auto ctx = new AsyncHttpClient::RequestContext();
+    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/login");
+    ctx->response = new AsyncHttpResponse();
+
+    String frame = "HTTP/1.1 200 OK\r\nSet-Cookie: admin=1; Path=/admin; Secure\r\nContent-Length: 0\r\n\r\n";
+    TEST_ASSERT_TRUE(client.parseResponseHeaders(ctx, frame));
+
+    AsyncHttpRequest wrongPath(HTTP_GET, "http://example.com/public");
+    client.applyCookies(&wrongPath);
+    TEST_ASSERT_TRUE(wrongPath.getHeader("Cookie").isEmpty());
+
+    AsyncHttpRequest insecureTarget(HTTP_GET, "http://example.com/admin/dashboard");
+    client.applyCookies(&insecureTarget);
+    TEST_ASSERT_TRUE(insecureTarget.getHeader("Cookie").isEmpty());
+
+    AsyncHttpRequest secureTarget(HTTP_GET, "https://example.com/admin/dashboard");
+    client.applyCookies(&secureTarget);
+    TEST_ASSERT_EQUAL_STRING("admin=1", secureTarget.getHeader("Cookie").c_str());
+
+    cleanupContext(ctx);
+}
+
 void setup() {
     delay(2000);
     UNITY_BEGIN();
@@ -195,6 +235,8 @@ void setup() {
     RUN_TEST(test_redirect_to_https_supported);
     RUN_TEST(test_header_limit_triggers_error);
     RUN_TEST(test_header_limit_allows_body_bytes_after_headers);
+    RUN_TEST(test_cookie_roundtrip_basic);
+    RUN_TEST(test_cookie_path_and_secure_rules);
     UNITY_END();
 }
 

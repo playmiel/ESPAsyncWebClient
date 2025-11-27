@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cerrno>
+#include <cstring>
 #include "UrlParser.h"
 
 static constexpr size_t kMaxChunkSizeLineLen = 64;
@@ -202,6 +203,41 @@ void AsyncHttpClient::setTlsHandshakeTimeout(uint32_t timeoutMs) {
     unlock();
 }
 
+void AsyncHttpClient::clearCookies() {
+    lock();
+    _cookies.clear();
+    unlock();
+}
+
+void AsyncHttpClient::setCookie(const char* name, const char* value, const char* path, const char* domain,
+                                bool secure) {
+    if (!name || strlen(name) == 0)
+        return;
+    StoredCookie cookie;
+    cookie.name = String(name);
+    cookie.value = value ? String(value) : String();
+    cookie.path = (path && strlen(path) > 0) ? String(path) : String("/");
+    cookie.domain = domain ? String(domain) : String();
+    cookie.secure = secure;
+    if (!cookie.path.startsWith("/"))
+        cookie.path = "/" + cookie.path;
+    if (cookie.domain.startsWith("."))
+        cookie.domain.remove(0, 1);
+
+    lock();
+    for (auto it = _cookies.begin(); it != _cookies.end();) {
+        if (it->name.equalsIgnoreCase(cookie.name) && it->domain.equalsIgnoreCase(cookie.domain) &&
+            it->path.equals(cookie.path)) {
+            it = _cookies.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!cookie.value.isEmpty())
+        _cookies.push_back(cookie);
+    unlock();
+}
+
 uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
                                       ErrorCallback onError) {
     // Snapshot global defaults under lock to avoid concurrent modification issues
@@ -278,6 +314,7 @@ void AsyncHttpClient::executeOrQueue(RequestContext* context) {
 }
 
 void AsyncHttpClient::executeRequest(RequestContext* context) {
+    applyCookies(context->request);
     context->connectStartMs = millis();
     context->transport = buildTransport(context);
     if (!context->transport) {
@@ -638,6 +675,8 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
                     context->response->reserveBody(context->expectedContentLength);
             } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
                 context->chunked = true;
+            } else if (name.equalsIgnoreCase("Set-Cookie")) {
+                storeResponseCookie(context->request, value);
             }
         }
         lineStart = lineEnd + 2;
@@ -1000,4 +1039,138 @@ AsyncTransport* AsyncHttpClient::buildTransport(RequestContext* context) {
         return createTlsTransport(cfg);
     }
     return createTcpTransport();
+}
+
+bool AsyncHttpClient::domainMatches(const String& cookieDomain, const String& host) const {
+    if (cookieDomain.length() == 0)
+        return true;
+    if (host.equalsIgnoreCase(cookieDomain))
+        return true;
+    if (host.length() <= cookieDomain.length())
+        return false;
+    size_t offset = host.length() - cookieDomain.length();
+    if (offset == 0 || host.charAt(offset - 1) != '.')
+        return false;
+    return host.substring(offset).equalsIgnoreCase(cookieDomain);
+}
+
+bool AsyncHttpClient::pathMatches(const String& cookiePath, const String& requestPath) const {
+    String req = requestPath;
+    int q = req.indexOf('?');
+    if (q != -1)
+        req = req.substring(0, q);
+    if (!req.startsWith("/"))
+        req = "/" + req;
+    String cpath = cookiePath.length() > 0 ? cookiePath : "/";
+    if (!cpath.startsWith("/"))
+        cpath = "/" + cpath;
+    if (req.length() < cpath.length())
+        return false;
+    return req.startsWith(cpath);
+}
+
+bool AsyncHttpClient::cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request) const {
+    if (!request)
+        return false;
+    if (cookie.secure && !request->isSecure())
+        return false;
+    if (!domainMatches(cookie.domain, request->getHost()))
+        return false;
+    if (!pathMatches(cookie.path, request->getPath()))
+        return false;
+    return !cookie.value.isEmpty();
+}
+
+void AsyncHttpClient::applyCookies(AsyncHttpRequest* request) {
+    if (!request)
+        return;
+    String cookieHeader;
+    lock();
+    for (const auto& cookie : _cookies) {
+        if (cookieMatchesRequest(cookie, request)) {
+            if (!cookieHeader.isEmpty())
+                cookieHeader += "; ";
+            cookieHeader += cookie.name;
+            cookieHeader += "=";
+            cookieHeader += cookie.value;
+        }
+    }
+    unlock();
+    if (cookieHeader.isEmpty())
+        return;
+    String existing = request->getHeader("Cookie");
+    if (!existing.isEmpty()) {
+        if (!existing.endsWith(";"))
+            existing += ";";
+        existing += " ";
+        existing += cookieHeader;
+        request->setHeader("Cookie", existing);
+    } else {
+        request->setHeader("Cookie", cookieHeader);
+    }
+}
+
+void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const String& setCookieValue) {
+    if (!request)
+        return;
+    String raw = setCookieValue;
+    if (raw.length() == 0)
+        return;
+    int semi = raw.indexOf(';');
+    String pair = semi == -1 ? raw : raw.substring(0, semi);
+    pair.trim();
+    int eq = pair.indexOf('=');
+    if (eq <= 0)
+        return;
+    StoredCookie cookie;
+    cookie.name = pair.substring(0, eq);
+    cookie.value = pair.substring(eq + 1);
+    cookie.name.trim();
+    cookie.value.trim();
+    cookie.domain = request->getHost();
+    cookie.path = "/";
+    bool remove = cookie.value.isEmpty();
+
+    int pos = semi;
+    while (pos != -1) {
+        int next = raw.indexOf(';', pos + 1);
+        String token = raw.substring(pos + 1, next == -1 ? raw.length() : next);
+        token.trim();
+        if (!token.isEmpty()) {
+            int eqPos = token.indexOf('=');
+            String key = eqPos == -1 ? token : token.substring(0, eqPos);
+            String val = eqPos == -1 ? "" : token.substring(eqPos + 1);
+            key.trim();
+            val.trim();
+            if (key.equalsIgnoreCase("Path")) {
+                cookie.path = val.length() > 0 ? val : "/";
+            } else if (key.equalsIgnoreCase("Domain")) {
+                cookie.domain = val;
+            } else if (key.equalsIgnoreCase("Secure")) {
+                cookie.secure = true;
+            } else if (key.equalsIgnoreCase("Max-Age")) {
+                long age = val.toInt();
+                if (age <= 0)
+                    remove = true;
+            }
+        }
+        pos = next;
+    }
+    if (!cookie.path.startsWith("/"))
+        cookie.path = "/" + cookie.path;
+    if (cookie.domain.startsWith("."))
+        cookie.domain.remove(0, 1);
+
+    lock();
+    for (auto it = _cookies.begin(); it != _cookies.end();) {
+        if (it->name.equalsIgnoreCase(cookie.name) && it->domain.equalsIgnoreCase(cookie.domain) &&
+            it->path.equals(cookie.path)) {
+            it = _cookies.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!remove)
+        _cookies.push_back(cookie);
+    unlock();
 }
