@@ -537,8 +537,6 @@ pio test -e esp32dev -f test_chunk_parse
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-- Added: HEAD, PATCH
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
