@@ -148,9 +148,7 @@ static void test_reuses_pooled_connection() {
     ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/");
     ctx->request->setHeader("Connection", "keep-alive");
     ctx->response = new AsyncHttpResponse();
-    ctx->onSuccess = [](AsyncHttpResponse* resp) {
-        TEST_ASSERT_EQUAL(200, resp->getStatusCode());
-    };
+    ctx->onSuccess = [](AsyncHttpResponse* resp) { TEST_ASSERT_EQUAL(200, resp->getStatusCode()); };
 
     client.executeRequest(ctx);
     TEST_ASSERT_TRUE(ctx->usingPooledConnection);

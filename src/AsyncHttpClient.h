@@ -77,22 +77,7 @@ class AsyncHttpClient {
     void setTlsFingerprint(const char* fingerprintHex);
     void setTlsInsecure(bool allowInsecure);
     void setTlsHandshakeTimeout(uint32_t timeoutMs);
-    void setKeepAlive(bool enable, uint16_t idleMs = 5000) {
-        std::vector<PooledConnection> dropped;
-        lock();
-        _keepAliveEnabled = enable;
-        _keepAliveIdleMs = idleMs == 0 ? 1000 : idleMs;
-        if (!enable && !_idleConnections.empty()) {
-            dropped.swap(_idleConnections);
-        }
-        unlock();
-        for (auto& conn : dropped) {
-            if (conn.transport) {
-                conn.transport->close(true);
-                delete conn.transport;
-            }
-        }
-    }
+    void setKeepAlive(bool enable, uint16_t idleMs = 5000);
     AsyncHttpTLSConfig getDefaultTlsConfig() const {
         return _defaultTlsConfig;
     }

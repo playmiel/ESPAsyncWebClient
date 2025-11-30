@@ -1,10 +1,6 @@
 #include <Arduino.h>
 #include "ESPAsyncWebClient.h"
 
-void setup() {
+void setup() {}
 
-}
-
-void loop() {
-
-}
+void loop() {}

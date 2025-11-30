@@ -12,7 +12,16 @@ static constexpr size_t kMaxChunkSizeLineLen = 64;
 static constexpr size_t kMaxChunkTrailerLineLen = 256;
 static constexpr size_t kMaxChunkTrailerLines = 32;
 static bool equalsIgnoreCase(const String& a, const char* b) {
-    return a.equalsIgnoreCase(String(b));
+    size_t lenA = a.length();
+    size_t lenB = strlen(b);
+    if (lenA != lenB)
+        return false;
+    for (size_t i = 0; i < lenA; ++i) {
+        if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 AsyncHttpClient::AsyncHttpClient()
@@ -215,6 +224,23 @@ void AsyncHttpClient::setTlsHandshakeTimeout(uint32_t timeoutMs) {
     unlock();
 }
 
+void AsyncHttpClient::setKeepAlive(bool enable, uint16_t idleMs) {
+    std::vector<PooledConnection> dropped;
+    lock();
+    _keepAliveEnabled = enable;
+    _keepAliveIdleMs = idleMs == 0 ? 1000 : idleMs;
+    if (!enable && !_idleConnections.empty()) {
+        dropped.swap(_idleConnections);
+    }
+    unlock();
+    for (auto& conn : dropped) {
+        if (conn.transport) {
+            conn.transport->close(true);
+            delete conn.transport;
+        }
+    }
+}
+
 void AsyncHttpClient::clearCookies() {
     lock();
     _cookies.clear();
@@ -290,7 +316,7 @@ uint32_t AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onS
     ctx->connectTimeoutMs = _defaultConnectTimeout;
     if (_keepAliveEnabled && request) {
         String conn = request->getHeader("Connection");
-        if (conn.isEmpty() || conn.equalsIgnoreCase("close"))
+        if (conn.isEmpty())
             request->setHeader("Connection", "keep-alive");
         if (request->getHeader("Keep-Alive").isEmpty()) {
             uint16_t timeoutSec = static_cast<uint16_t>(std::max<uint32_t>(1, _keepAliveIdleMs / 1000));
@@ -1154,6 +1180,7 @@ void AsyncHttpClient::pruneIdleConnections() {
     if (!_keepAliveEnabled)
         return;
     uint32_t now = millis();
+    std::vector<AsyncTransport*> staleTransports;
     lock();
     for (auto it = _idleConnections.begin(); it != _idleConnections.end();) {
         bool stale = !_keepAliveEnabled || !it->transport || !it->transport->canSend() ||
@@ -1161,17 +1188,17 @@ void AsyncHttpClient::pruneIdleConnections() {
         if (stale) {
             AsyncTransport* toDelete = it->transport;
             it = _idleConnections.erase(it);
-            unlock();
-            if (toDelete) {
-                toDelete->close(true);
-                delete toDelete;
-            }
-            lock();
-            continue;
+            if (toDelete)
+                staleTransports.push_back(toDelete);
+        } else {
+            ++it;
         }
-        ++it;
     }
     unlock();
+    for (auto* t : staleTransports) {
+        t->close(true);
+        delete t;
+    }
 }
 
 bool AsyncHttpClient::shouldRecycleTransport(RequestContext* context) const {
@@ -1348,7 +1375,7 @@ void AsyncHttpClient::applyCookies(AsyncHttpRequest* request) {
     unlock();
     size_t estimatedLen = 0;
     if (!cookiesCopy.empty()) {
-        estimatedLen += (cookiesCopy.size() > 0 ? (cookiesCopy.size() - 1) * 2 : 0); // separators
+        estimatedLen += (cookiesCopy.size() - 1) * 2; // separators
         for (const auto& cookie : cookiesCopy)
             estimatedLen += cookie.name.length() + 1 + cookie.value.length();
         cookieHeader.reserve(estimatedLen);
