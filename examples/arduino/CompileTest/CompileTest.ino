@@ -20,7 +20,7 @@ void setup() {
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
     // Timeouts: If your AsyncTCP build doesn't provide native timeouts and you didn't enable auto-loop
-    // (-DASYNC_HTTP_ENABLE_AUTOLOOP, ESP32 only), you must call client.loop() periodically to enforce
+    // (-DASYNC_HTTP_ENABLE_AUTOLOOP), you must call client.loop() periodically to enforce
     // request timeouts. Uncomment the line below to enable request timeouts in this example.
     // client.loop();
 #endif

@@ -16,6 +16,7 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Multiple HTTP methods** - GET, POST, PUT, DELETE, HEAD, PATCH support
 - ✅ **Custom headers** - Set global and per-request headers
 - ✅ **Callback-based responses** - Success and error callbacks
+- ✅ **Automatic cookies** - Captures `Set-Cookie` responses and replays them via `Cookie` on matching requests
 - ✅ **ESP32 only** – Arduino-ESP32 core 3.x required (core 2.x dropped; ESP8266 removed since 1.0.1)
 - ✅ **Simple API** - Easy to use with minimal setup
 - ✅ **Configurable timeouts** - Set custom timeout values
@@ -82,7 +83,7 @@ void setup() {
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
     // If your AsyncTCP does NOT provide native timeouts, you must drive timeouts manually
-    // unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP .
     // Either:
     //   - Define ASYNC_HTTP_ENABLE_AUTOLOOP (ESP32): a tiny FreeRTOS task will call client.loop() for you; or
     //   - Call client.loop() periodically here yourself (recommended every ~10-20ms when busy).
@@ -160,6 +161,11 @@ void setMaxParallel(uint16_t maxParallel);
 
 // Set User-Agent string
 void setUserAgent(const char* userAgent);
+
+// Cookie jar helpers
+void clearCookies();
+void setCookie(const char* name, const char* value, const char* path = "/", const char* domain = nullptr,
+               bool secure = false);
 ```
 
 #### Callback Types
@@ -530,8 +536,6 @@ pio test -e esp32dev -f test_chunk_parse
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-- Added: HEAD, PATCH
 
 ## Contributing
 
