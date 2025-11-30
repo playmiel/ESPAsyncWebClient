@@ -2,6 +2,7 @@
 
 #include "AsyncHttpClient.h"
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
@@ -10,6 +11,9 @@
 static constexpr size_t kMaxChunkSizeLineLen = 64;
 static constexpr size_t kMaxChunkTrailerLineLen = 256;
 static constexpr size_t kMaxChunkTrailerLines = 32;
+static bool equalsIgnoreCase(const String& a, const char* b) {
+    return a.equalsIgnoreCase(String(b));
+}
 
 AsyncHttpClient::AsyncHttpClient()
     : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
@@ -45,6 +49,14 @@ AsyncHttpClient::~AsyncHttpClient() {
         _reqMutex = nullptr;
     }
 #endif
+    for (auto& pooled : _idleConnections) {
+        if (pooled.transport) {
+            pooled.transport->close(true);
+            delete pooled.transport;
+            pooled.transport = nullptr;
+        }
+    }
+    _idleConnections.clear();
 }
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
@@ -255,6 +267,11 @@ uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const 
         request->setHeader(h.name, h.value);
     request->setUserAgent(uaCopy);
     request->setTimeout(timeoutCopy);
+    if (_keepAliveEnabled) {
+        request->setHeader("Connection", "keep-alive");
+        uint16_t timeoutSec = static_cast<uint16_t>(std::max<uint32_t>(1, _keepAliveIdleMs / 1000));
+        request->setHeader("Keep-Alive", String("timeout=") + String(timeoutSec));
+    }
     if (data) {
         request->setBody(String(data));
         request->setHeader("Content-Type", "application/x-www-form-urlencoded");
@@ -271,6 +288,15 @@ uint32_t AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onS
     ctx->onError = onError;
     ctx->id = _nextRequestId++;
     ctx->connectTimeoutMs = _defaultConnectTimeout;
+    if (_keepAliveEnabled && request) {
+        String conn = request->getHeader("Connection");
+        if (conn.isEmpty() || conn.equalsIgnoreCase("close"))
+            request->setHeader("Connection", "keep-alive");
+        if (request->getHeader("Keep-Alive").isEmpty()) {
+            uint16_t timeoutSec = static_cast<uint16_t>(std::max<uint32_t>(1, _keepAliveIdleMs / 1000));
+            request->setHeader("Keep-Alive", String("timeout=") + String(timeoutSec));
+        }
+    }
     executeOrQueue(ctx);
     return ctx->id;
 }
@@ -316,11 +342,20 @@ void AsyncHttpClient::executeOrQueue(RequestContext* context) {
 void AsyncHttpClient::executeRequest(RequestContext* context) {
     applyCookies(context->request);
     context->connectStartMs = millis();
-    context->transport = buildTransport(context);
+    context->resolvedTlsConfig = resolveTlsConfig(context->request);
+    String connHeader = context->request->getHeader("Connection");
+    context->requestKeepAlive = _keepAliveEnabled && !equalsIgnoreCase(connHeader, "close");
+    AsyncTransport* pooled = nullptr;
+    if (context->requestKeepAlive)
+        pooled = checkoutPooledTransport(context->request, context->resolvedTlsConfig);
+    context->transport = pooled ? pooled : buildTransport(context);
+    context->usingPooledConnection = pooled != nullptr;
     if (!context->transport) {
         triggerError(context, HTTPS_NOT_SUPPORTED, "HTTPS transport unavailable");
         return;
     }
+    if (context->usingPooledConnection)
+        context->connectTimeoutMs = 0;
     lock();
     bool alreadyTracked = std::find(_activeRequests.begin(), _activeRequests.end(), context) != _activeRequests.end();
     if (!alreadyTracked)
@@ -369,7 +404,9 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->timeoutTimer = millis();
 #endif
 
-    if (!context->transport->connect(context->request->getHost().c_str(), context->request->getPort())) {
+    if (context->usingPooledConnection) {
+        handleConnect(context); // Already connected, just send request
+    } else if (!context->transport->connect(context->request->getHost().c_str(), context->request->getPort())) {
         triggerError(context, CONNECTION_FAILED, "Failed to initiate connection");
         return;
     }
@@ -675,6 +712,11 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
                     context->response->reserveBody(context->expectedContentLength);
             } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
                 context->chunked = true;
+            } else if (name.equalsIgnoreCase("Connection")) {
+                String lower = value;
+                lower.toLowerCase();
+                if (lower.indexOf("close") != -1)
+                    context->serverRequestedClose = true;
             } else if (name.equalsIgnoreCase("Set-Cookie")) {
                 storeResponseCookie(context->request, value);
             }
@@ -701,9 +743,13 @@ void AsyncHttpClient::processResponse(RequestContext* context) {
 }
 
 void AsyncHttpClient::cleanup(RequestContext* context) {
+    AsyncTransport* toDelete = nullptr;
     if (context->transport) {
-        context->transport->close();
-        delete context->transport;
+        if (shouldRecycleTransport(context)) {
+            releaseConnectionToPool(context);
+        } else {
+            toDelete = context->transport;
+        }
         context->transport = nullptr;
     }
     if (context->request)
@@ -715,6 +761,10 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
     if (it != _activeRequests.end())
         _activeRequests.erase(it);
     unlock();
+    if (toDelete) {
+        toDelete->close();
+        delete toDelete;
+    }
     delete context;
     tryDequeue();
 }
@@ -895,6 +945,10 @@ void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttp
     context->headersSent = false;
     context->streamingBodyInProgress = false;
     context->notifiedEndCallback = false;
+    context->requestKeepAlive = false;
+    context->serverRequestedClose = false;
+    context->usingPooledConnection = false;
+    context->resolvedTlsConfig = AsyncHttpTLSConfig();
 #if !ASYNC_TCP_HAS_TIMEOUT
     context->timeoutTimer = millis();
 #endif
@@ -920,6 +974,7 @@ bool AsyncHttpClient::handleRedirect(RequestContext* context) {
 
 void AsyncHttpClient::loop() {
     uint32_t now = millis();
+    pruneIdleConnections();
     // Iterate safely even if callbacks remove entries: use index loop.
     lock();
     for (size_t i = 0; i < _activeRequests.size();) {
@@ -1029,16 +1084,216 @@ AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* req
     return cfg;
 }
 
+bool AsyncHttpClient::tlsConfigEquals(const AsyncHttpTLSConfig& a, const AsyncHttpTLSConfig& b) const {
+    return a.caCert == b.caCert && a.clientCert == b.clientCert && a.clientPrivateKey == b.clientPrivateKey &&
+           a.fingerprint == b.fingerprint && a.insecure == b.insecure &&
+           a.handshakeTimeoutMs == b.handshakeTimeoutMs;
+}
+
+AsyncTransport* AsyncHttpClient::checkoutPooledTransport(const AsyncHttpRequest* request,
+                                                         const AsyncHttpTLSConfig& tlsCfg) {
+    if (!request)
+        return nullptr;
+    AsyncTransport* found = nullptr;
+    lock();
+    for (auto it = _idleConnections.begin(); it != _idleConnections.end();) {
+        bool removeEntry = false;
+        if (!it->transport || !it->transport->canSend()) {
+            removeEntry = true;
+        } else {
+            bool match = it->host.equalsIgnoreCase(request->getHost()) && it->port == request->getPort() &&
+                         it->secure == request->isSecure();
+            if (match && it->secure)
+                match = tlsConfigEquals(it->tlsConfig, tlsCfg);
+            if (match) {
+                found = it->transport;
+                _idleConnections.erase(it);
+                break;
+            }
+        }
+        if (removeEntry) {
+            AsyncTransport* toDelete = it->transport;
+            _idleConnections.erase(it);
+            if (toDelete) {
+                toDelete->close(true);
+                delete toDelete;
+            }
+            continue;
+        }
+        ++it;
+    }
+    unlock();
+    if (found) {
+        found->setDataHandler(nullptr, nullptr);
+        found->setDisconnectHandler(nullptr, nullptr);
+        found->setErrorHandler(nullptr, nullptr);
+        found->setTimeoutHandler(nullptr, nullptr);
+    }
+    return found;
+}
+
+void AsyncHttpClient::dropPooledTransport(AsyncTransport* transport, bool closeTransport) {
+    if (!transport)
+        return;
+    bool removed = false;
+    lock();
+    for (auto it = _idleConnections.begin(); it != _idleConnections.end(); ++it) {
+        if (it->transport == transport) {
+            _idleConnections.erase(it);
+            removed = true;
+            break;
+        }
+    }
+    unlock();
+    if (removed && closeTransport) {
+        transport->close(true);
+        delete transport;
+    }
+}
+
+void AsyncHttpClient::pruneIdleConnections() {
+    if (!_keepAliveEnabled)
+        return;
+    uint32_t now = millis();
+    lock();
+    for (auto it = _idleConnections.begin(); it != _idleConnections.end();) {
+        bool stale = !_keepAliveEnabled || !it->transport || !it->transport->canSend() ||
+                     (now - it->lastUsedMs) > _keepAliveIdleMs;
+        if (stale) {
+            AsyncTransport* toDelete = it->transport;
+            it = _idleConnections.erase(it);
+            unlock();
+            if (toDelete) {
+                toDelete->close(true);
+                delete toDelete;
+            }
+            lock();
+            continue;
+        }
+        ++it;
+    }
+    unlock();
+}
+
+bool AsyncHttpClient::shouldRecycleTransport(RequestContext* context) const {
+    if (!_keepAliveEnabled || !context || !context->transport || !context->request || !context->responseProcessed)
+        return false;
+    if (!context->response || context->response->getStatusCode() == 0)
+        return false;
+    if (!context->requestKeepAlive || context->serverRequestedClose)
+        return false;
+    if (context->chunked && !context->chunkedComplete)
+        return false;
+    if (!context->chunked && context->expectedContentLength > 0 &&
+        context->receivedContentLength < context->expectedContentLength)
+        return false;
+    if (!context->transport->canSend())
+        return false;
+    return true;
+}
+
+void AsyncHttpClient::releaseConnectionToPool(RequestContext* context) {
+    if (!context || !context->request || !context->transport)
+        return;
+    PooledConnection pooled;
+    pooled.transport = context->transport;
+    pooled.host = context->request->getHost();
+    pooled.port = context->request->getPort();
+    pooled.secure = context->request->isSecure();
+    pooled.tlsConfig = context->resolvedTlsConfig;
+    pooled.lastUsedMs = millis();
+
+    pooled.transport->setConnectHandler(nullptr, nullptr);
+    pooled.transport->setTimeoutHandler(nullptr, nullptr);
+    pooled.transport->setDataHandler(
+        [](void* arg, AsyncTransport* t, void* data, size_t len) {
+            (void)data;
+            (void)len;
+            auto self = static_cast<AsyncHttpClient*>(arg);
+            self->dropPooledTransport(t, true);
+        },
+        this);
+    pooled.transport->setDisconnectHandler(
+        [](void* arg, AsyncTransport* t) {
+            auto self = static_cast<AsyncHttpClient*>(arg);
+            self->dropPooledTransport(t, true);
+        },
+        this);
+    pooled.transport->setErrorHandler(
+        [](void* arg, AsyncTransport* t, HttpClientError, const char*) {
+            auto self = static_cast<AsyncHttpClient*>(arg);
+            self->dropPooledTransport(t, true);
+        },
+        this);
+
+    lock();
+    _idleConnections.push_back(pooled);
+    unlock();
+}
+
 AsyncTransport* AsyncHttpClient::buildTransport(RequestContext* context) {
     if (!context || !context->request)
         return nullptr;
     if (context->request->isSecure()) {
-        AsyncHttpTLSConfig cfg = resolveTlsConfig(context->request);
+        AsyncHttpTLSConfig cfg = context->resolvedTlsConfig;
         if (cfg.handshakeTimeoutMs == 0)
             cfg.handshakeTimeoutMs = _defaultTlsConfig.handshakeTimeoutMs;
         return createTlsTransport(cfg);
     }
     return createTcpTransport();
+}
+
+bool AsyncHttpClient::isIpLiteral(const String& host) const {
+    if (host.length() == 0)
+        return false;
+    bool hasColon = false;
+    bool hasDot = false;
+    for (size_t i = 0; i < host.length(); ++i) {
+        char c = host.charAt(i);
+        if (std::isxdigit(static_cast<unsigned char>(c))) {
+            continue;
+        }
+        if (c == '.') {
+            hasDot = true;
+            continue;
+        }
+        if (c == ':') {
+            hasColon = true;
+            continue;
+        }
+        return false;
+    }
+    return hasColon || hasDot;
+}
+
+bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host,
+                                            bool domainAttributeProvided) const {
+    String cleaned = domain;
+    cleaned.trim();
+    if (cleaned.startsWith("."))
+        cleaned.remove(0, 1);
+
+    if (!domainAttributeProvided || cleaned.length() == 0) {
+        domain = host;
+        return true;
+    }
+
+    String hostLower = host;
+    hostLower.toLowerCase();
+    cleaned.toLowerCase();
+
+    if (isIpLiteral(hostLower))
+        return false;
+    if (!domainMatches(cleaned, hostLower))
+        return false;
+    // Heuristic public-suffix guard: require both host and domain to have at least one dot
+    if (hostLower.indexOf('.') == -1)
+        return false;
+    if (cleaned.indexOf('.') == -1)
+        return false;
+
+    domain = cleaned;
+    return true;
 }
 
 bool AsyncHttpClient::domainMatches(const String& cookieDomain, const String& host) const {
@@ -1049,7 +1304,7 @@ bool AsyncHttpClient::domainMatches(const String& cookieDomain, const String& ho
     if (host.length() <= cookieDomain.length())
         return false;
     size_t offset = host.length() - cookieDomain.length();
-    if (offset == 0 || host.charAt(offset - 1) != '.')
+    if (host.charAt(offset - 1) != '.')
         return false;
     return host.substring(offset).equalsIgnoreCase(cookieDomain);
 }
@@ -1064,9 +1319,13 @@ bool AsyncHttpClient::pathMatches(const String& cookiePath, const String& reques
     String cpath = cookiePath.length() > 0 ? cookiePath : "/";
     if (!cpath.startsWith("/"))
         cpath = "/" + cpath;
-    if (req.length() < cpath.length())
+    if (req.equals(cpath))
+        return true;
+    if (!req.startsWith(cpath))
         return false;
-    return req.startsWith(cpath);
+    if (cpath.endsWith("/"))
+        return true;
+    return req.length() > cpath.length() && req.charAt(cpath.length()) == '/';
 }
 
 bool AsyncHttpClient::cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request) const {
@@ -1085,8 +1344,18 @@ void AsyncHttpClient::applyCookies(AsyncHttpRequest* request) {
     if (!request)
         return;
     String cookieHeader;
+    std::vector<StoredCookie> cookiesCopy;
     lock();
-    for (const auto& cookie : _cookies) {
+    cookiesCopy = _cookies;
+    unlock();
+    size_t estimatedLen = 0;
+    if (!cookiesCopy.empty()) {
+        estimatedLen += (cookiesCopy.size() > 0 ? (cookiesCopy.size() - 1) * 2 : 0); // separators
+        for (const auto& cookie : cookiesCopy)
+            estimatedLen += cookie.name.length() + 1 + cookie.value.length();
+        cookieHeader.reserve(estimatedLen);
+    }
+    for (const auto& cookie : cookiesCopy) {
         if (cookieMatchesRequest(cookie, request)) {
             if (!cookieHeader.isEmpty())
                 cookieHeader += "; ";
@@ -1095,7 +1364,6 @@ void AsyncHttpClient::applyCookies(AsyncHttpRequest* request) {
             cookieHeader += cookie.value;
         }
     }
-    unlock();
     if (cookieHeader.isEmpty())
         return;
     String existing = request->getHeader("Cookie");
@@ -1129,6 +1397,7 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
     cookie.value.trim();
     cookie.domain = request->getHost();
     cookie.path = "/";
+    bool domainAttributeProvided = false;
     bool remove = cookie.value.isEmpty();
 
     int pos = semi;
@@ -1146,6 +1415,7 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
                 cookie.path = val.length() > 0 ? val : "/";
             } else if (key.equalsIgnoreCase("Domain")) {
                 cookie.domain = val;
+                domainAttributeProvided = true;
             } else if (key.equalsIgnoreCase("Secure")) {
                 cookie.secure = true;
             } else if (key.equalsIgnoreCase("Max-Age")) {
@@ -1156,10 +1426,11 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
         }
         pos = next;
     }
+
+    if (!normalizeCookieDomain(cookie.domain, request->getHost(), domainAttributeProvided))
+        return;
     if (!cookie.path.startsWith("/"))
         cookie.path = "/" + cookie.path;
-    if (cookie.domain.startsWith("."))
-        cookie.domain.remove(0, 1);
 
     lock();
     for (auto it = _cookies.begin(); it != _cookies.end();) {

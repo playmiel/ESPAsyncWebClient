@@ -77,6 +77,22 @@ class AsyncHttpClient {
     void setTlsFingerprint(const char* fingerprintHex);
     void setTlsInsecure(bool allowInsecure);
     void setTlsHandshakeTimeout(uint32_t timeoutMs);
+    void setKeepAlive(bool enable, uint16_t idleMs = 5000) {
+        std::vector<PooledConnection> dropped;
+        lock();
+        _keepAliveEnabled = enable;
+        _keepAliveIdleMs = idleMs == 0 ? 1000 : idleMs;
+        if (!enable && !_idleConnections.empty()) {
+            dropped.swap(_idleConnections);
+        }
+        unlock();
+        for (auto& conn : dropped) {
+            if (conn.transport) {
+                conn.transport->close(true);
+                delete conn.transport;
+            }
+        }
+    }
     AsyncHttpTLSConfig getDefaultTlsConfig() const {
         return _defaultTlsConfig;
     }
@@ -141,6 +157,10 @@ class AsyncHttpClient {
         uint32_t connectTimeoutMs;
         bool headersSent;
         bool streamingBodyInProgress;
+        bool requestKeepAlive;
+        bool serverRequestedClose;
+        bool usingPooledConnection;
+        AsyncHttpTLSConfig resolvedTlsConfig;
 #if !ASYNC_TCP_HAS_TIMEOUT
         uint32_t timeoutTimer;
 #endif
@@ -149,7 +169,8 @@ class AsyncHttpClient {
               expectedContentLength(0), receivedContentLength(0), chunked(false), chunkedComplete(false),
               currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), trailerLineCount(0),
               redirectCount(0), notifiedEndCallback(false), connectStartMs(0), connectTimeoutMs(0), headersSent(false),
-              streamingBodyInProgress(false)
+              streamingBodyInProgress(false), requestKeepAlive(false), serverRequestedClose(false),
+              usingPooledConnection(false)
 #if !ASYNC_TCP_HAS_TIMEOUT
               ,
               timeoutTimer(0)
@@ -172,6 +193,18 @@ class AsyncHttpClient {
     std::vector<RequestContext*> _pendingQueue;
     uint32_t _defaultConnectTimeout = 5000;
     AsyncHttpTLSConfig _defaultTlsConfig;
+    bool _keepAliveEnabled = false;
+    uint32_t _keepAliveIdleMs = 5000;
+
+    struct PooledConnection {
+        AsyncTransport* transport = nullptr;
+        String host;
+        uint16_t port = 0;
+        bool secure = false;
+        AsyncHttpTLSConfig tlsConfig;
+        uint32_t lastUsedMs = 0;
+    };
+    std::vector<PooledConnection> _idleConnections;
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
@@ -202,6 +235,12 @@ class AsyncHttpClient {
     bool shouldEnforceBodyLimit(RequestContext* context);
     AsyncTransport* buildTransport(RequestContext* context);
     AsyncHttpTLSConfig resolveTlsConfig(const AsyncHttpRequest* request) const;
+    bool tlsConfigEquals(const AsyncHttpTLSConfig& a, const AsyncHttpTLSConfig& b) const;
+    AsyncTransport* checkoutPooledTransport(const AsyncHttpRequest* request, const AsyncHttpTLSConfig& tlsCfg);
+    void releaseConnectionToPool(RequestContext* context);
+    bool shouldRecycleTransport(RequestContext* context) const;
+    void pruneIdleConnections();
+    void dropPooledTransport(AsyncTransport* transport, bool closeTransport);
     struct StoredCookie {
         String name;
         String value;
@@ -215,6 +254,8 @@ class AsyncHttpClient {
     bool cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request) const;
     bool domainMatches(const String& cookieDomain, const String& host) const;
     bool pathMatches(const String& cookiePath, const String& requestPath) const;
+    bool normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided) const;
+    bool isIpLiteral(const String& host) const;
 
   public:
     // Exposed publicly for tests and advanced internal usage
