@@ -112,7 +112,7 @@ class AsyncHttpClient {
     void lock();
     void unlock();
 
-    // Internal auto-loop task for fallback timeout mode (ESP32 only)
+    // Internal auto-loop task for fallback timeout mode 
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     static void _autoLoopTaskThunk(void* param);
     TaskHandle_t _autoLoopTaskHandle = nullptr;

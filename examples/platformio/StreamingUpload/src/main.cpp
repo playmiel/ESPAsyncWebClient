@@ -80,7 +80,7 @@ void setup() {
 
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
-    // Timeouts: call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // Timeouts: call client.loop() periodically unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP .
     // client.loop();
 #endif
 }

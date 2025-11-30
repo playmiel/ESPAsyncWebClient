@@ -83,7 +83,7 @@ void setup() {
 void loop() {
 #if !ASYNC_TCP_HAS_TIMEOUT
     // If your AsyncTCP does NOT provide native timeouts, you must drive timeouts manually
-    // unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP (ESP32 only).
+    // unless you build with -DASYNC_HTTP_ENABLE_AUTOLOOP .
     // Either:
     //   - Define ASYNC_HTTP_ENABLE_AUTOLOOP (ESP32): a tiny FreeRTOS task will call client.loop() for you; or
     //   - Call client.loop() periodically here yourself (recommended every ~10-20ms when busy).
