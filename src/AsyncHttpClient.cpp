@@ -1086,8 +1086,7 @@ AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* req
 
 bool AsyncHttpClient::tlsConfigEquals(const AsyncHttpTLSConfig& a, const AsyncHttpTLSConfig& b) const {
     return a.caCert == b.caCert && a.clientCert == b.clientCert && a.clientPrivateKey == b.clientPrivateKey &&
-           a.fingerprint == b.fingerprint && a.insecure == b.insecure &&
-           a.handshakeTimeoutMs == b.handshakeTimeoutMs;
+           a.fingerprint == b.fingerprint && a.insecure == b.insecure && a.handshakeTimeoutMs == b.handshakeTimeoutMs;
 }
 
 AsyncTransport* AsyncHttpClient::checkoutPooledTransport(const AsyncHttpRequest* request,
@@ -1266,8 +1265,7 @@ bool AsyncHttpClient::isIpLiteral(const String& host) const {
     return hasColon || hasDot;
 }
 
-bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host,
-                                            bool domainAttributeProvided) const {
+bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided) const {
     String cleaned = domain;
     cleaned.trim();
     if (cleaned.startsWith("."))
