@@ -11,6 +11,13 @@
 static constexpr size_t kMaxChunkSizeLineLen = 64;
 static constexpr size_t kMaxChunkTrailerLineLen = 256;
 static constexpr size_t kMaxChunkTrailerLines = 32;
+static constexpr size_t kDefaultMaxHeaderBytes = 2800; // ~2.8 KiB
+static constexpr size_t kDefaultMaxBodyBytes = 8192;   // 8 KiB
+static constexpr size_t kMaxCookieCount = 16;
+static constexpr size_t kMaxCookieBytes = 4096;
+static const char* kPublicSuffixes[] = {"com",  "net",  "org", "gov", "edu", "mil", "int",
+                                        "co.uk", "ac.uk", "gov.uk", "uk",  "io",  "co"};
+
 static bool equalsIgnoreCase(const String& a, const char* b) {
     size_t lenA = a.length();
     size_t lenB = strlen(b);
@@ -26,7 +33,8 @@ static bool equalsIgnoreCase(const String& a, const char* b) {
 
 AsyncHttpClient::AsyncHttpClient()
     : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
-      _bodyChunkCallback(nullptr), _followRedirects(false), _maxRedirectHops(3), _maxHeaderBytes(0) {
+      _bodyChunkCallback(nullptr), _maxBodySize(kDefaultMaxBodyBytes), _followRedirects(false), _maxRedirectHops(3),
+      _maxHeaderBytes(kDefaultMaxHeaderBytes) {
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     // Create recursive mutex for shared containers when auto-loop may run in background
     _reqMutex = xSemaphoreCreateRecursiveMutex();
@@ -1292,6 +1300,18 @@ bool AsyncHttpClient::isIpLiteral(const String& host) const {
     return hasColon || hasDot;
 }
 
+static bool isPublicSuffix(const String& domain) {
+    if (domain.length() == 0)
+        return false;
+    String lower = domain;
+    lower.toLowerCase();
+    for (auto suffix : kPublicSuffixes) {
+        if (lower.equals(suffix))
+            return true;
+    }
+    return false;
+}
+
 bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided) const {
     String cleaned = domain;
     cleaned.trim();
@@ -1315,6 +1335,8 @@ bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, 
     if (hostLower.indexOf('.') == -1)
         return false;
     if (cleaned.indexOf('.') == -1)
+        return false;
+    if (isPublicSuffix(cleaned))
         return false;
 
     domain = cleaned;
@@ -1409,6 +1431,8 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
     String raw = setCookieValue;
     if (raw.length() == 0)
         return;
+    if (raw.length() > kMaxCookieBytes)
+        return;
     int semi = raw.indexOf(';');
     String pair = semi == -1 ? raw : raw.substring(0, semi);
     pair.trim();
@@ -1456,6 +1480,9 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
         return;
     if (!cookie.path.startsWith("/"))
         cookie.path = "/" + cookie.path;
+    size_t payloadSize = cookie.name.length() + cookie.value.length() + cookie.domain.length() + cookie.path.length();
+    if (payloadSize > kMaxCookieBytes)
+        return;
 
     lock();
     for (auto it = _cookies.begin(); it != _cookies.end();) {
@@ -1466,7 +1493,10 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
             ++it;
         }
     }
-    if (!remove)
+    if (!remove) {
+        if (_cookies.size() >= kMaxCookieCount)
+            _cookies.erase(_cookies.begin());
         _cookies.push_back(cookie);
+    }
     unlock();
 }

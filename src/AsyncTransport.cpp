@@ -274,6 +274,7 @@ class AsyncTlsTransport : public AsyncTransport {
     std::vector<uint8_t> _encryptedBuffer;
     size_t _encryptedOffset = 0;
     std::vector<uint8_t> _fingerprintBytes;
+    bool _fingerprintInvalid = false;
 
     mbedtls_ssl_context _ssl;
     mbedtls_ssl_config _sslConfig;
@@ -295,7 +296,8 @@ static int hexValue(char c) {
     return -1;
 }
 
-static std::vector<uint8_t> parseFingerprintString(const String& text) {
+static std::vector<uint8_t> parseFingerprintString(const String& text, bool* outValid) {
+    bool valid = true;
     std::vector<uint8_t> bytes;
     int accum = -1;
     for (size_t i = 0; i < text.length(); ++i) {
@@ -306,6 +308,7 @@ static std::vector<uint8_t> parseFingerprintString(const String& text) {
         int v = hexValue(ch);
         if (v < 0) {
             bytes.clear();
+            valid = false;
             break;
         }
         if (accum == -1) {
@@ -318,7 +321,10 @@ static std::vector<uint8_t> parseFingerprintString(const String& text) {
     if (accum != -1) {
         // Odd number of nibbles -> invalid
         bytes.clear();
+        valid = false;
     }
+    if (outValid)
+        *outValid = valid || text.length() == 0;
     return bytes;
 }
 
@@ -334,7 +340,9 @@ AsyncTlsTransport::AsyncTlsTransport(const AsyncHttpTLSConfig& config) : _client
     mbedtls_pk_init(&_clientKey);
     mbedtls_entropy_init(&_entropy);
     mbedtls_ctr_drbg_init(&_ctrDrbg);
-    _fingerprintBytes = parseFingerprintString(_config.fingerprint);
+    bool fpValid = true;
+    _fingerprintBytes = parseFingerprintString(_config.fingerprint, &fpValid);
+    _fingerprintInvalid = (_config.fingerprint.length() > 0 && !fpValid);
 }
 
 AsyncTlsTransport::~AsyncTlsTransport() {
@@ -364,6 +372,10 @@ void AsyncTlsTransport::shutdownClient() {
 bool AsyncTlsTransport::connect(const char* host, uint16_t port) {
     if (!_client)
         return false;
+    if (_fingerprintInvalid) {
+        fail(TLS_FINGERPRINT_MISMATCH, "Invalid TLS fingerprint format");
+        return false;
+    }
     _host = host;
     _port = port;
     _handshakeStartMs = millis();

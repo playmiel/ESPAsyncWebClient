@@ -23,7 +23,7 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
 - ✅ **Chunked transfer decoding** - Validates framing and exposes parsed trailers
 - ✅ **Optional redirect following** - Follow 301/302/303 (converted to GET) and 307/308 (method preserved)
-- ✅ **Header & body guards** - Limit buffered response headers/body to avoid runaway responses
+- ✅ **Header & body guards** - Limits buffered headers (~2.8 KiB) and body (8 KiB) by default to avoid runaway responses
 - ✅ **Zero-copy streaming** - Combine `req->setNoStoreBody(true)` with `client.onBodyChunk(...)` to stream large payloads without heap spikes
 
 > ⚠ Limitations: provide trust material for HTTPS (CA, fingerprint or insecure flag) and remember the full body is buffered in memory unless you opt into zero-copy streaming via `setNoStoreBody(true)`.
@@ -150,10 +150,10 @@ void setDefaultConnectTimeout(uint32_t ms);
 // Follow HTTP redirects (max hops clamps to >=1). Disabled by default.
 void setFollowRedirects(bool enable, uint8_t maxHops = 3);
 
-// Abort if response headers exceed this many bytes (0 = unlimited)
+// Abort if response headers exceed this many bytes (default ~2.8 KiB, 0 = unlimited)
 void setMaxHeaderBytes(size_t maxBytes);
 
-// Soft limit for buffered response bodies (bytes, 0 = unlimited)
+// Soft limit for buffered response bodies (default 8192 bytes, 0 = unlimited)
 void setMaxBodySize(size_t maxBytes);
 
 // Limit simultaneous active requests (0 = unlimited, others queued)
@@ -162,11 +162,19 @@ void setMaxParallel(uint16_t maxParallel);
 // Set User-Agent string
 void setUserAgent(const char* userAgent);
 
+// Keep-alive connection pooling (idle timeout in ms, clamped to >= 1000)
+void setKeepAlive(bool enable, uint16_t idleMs = 5000);
+
 // Cookie jar helpers
 void clearCookies();
 void setCookie(const char* name, const char* value, const char* path = "/", const char* domain = nullptr,
                bool secure = false);
 ```
+
+Cookies are captured automatically from `Set-Cookie` responses and replayed on matching hosts/paths; call
+`clearCookies()` to wipe the jar or `setCookie()` to pre-seed entries manually. Keep-alive pooling is off by default;
+enable it with `setKeepAlive(true, idleMs)` to reuse TCP/TLS connections for the same host/port (respecting server
+`Connection: close` requests).
 
 #### Callback Types
 

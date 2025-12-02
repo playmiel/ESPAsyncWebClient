@@ -1,4 +1,6 @@
 #include "UrlParser.h"
+#include <cerrno>
+#include <cstdlib>
 
 namespace UrlParser {
 
@@ -7,6 +9,24 @@ static bool startsWith(const std::string& s, const char* prefix) {
     while (prefix[n] != '\0')
         ++n; // strlen
     return s.size() >= n && s.compare(0, n, prefix) == 0;
+}
+
+static bool parsePort(const std::string& portStr, uint16_t* out) {
+    if (!out || portStr.empty())
+        return false;
+    for (char c : portStr) {
+        if (c < '0' || c > '9')
+            return false;
+    }
+    errno = 0;
+    char* end = nullptr;
+    unsigned long val = std::strtoul(portStr.c_str(), &end, 10);
+    if (end == portStr.c_str() || *end != '\0')
+        return false;
+    if (errno == ERANGE || val > 65535)
+        return false;
+    *out = static_cast<uint16_t>(val);
+    return true;
 }
 
 bool parse(const std::string& originalUrl, ParsedUrl& out) {
@@ -54,9 +74,10 @@ bool parse(const std::string& originalUrl, ParsedUrl& out) {
     if (colon != std::string::npos) {
         std::string portStr = out.host.substr(colon + 1);
         out.host = out.host.substr(0, colon);
-        if (!portStr.empty()) {
-            out.port = static_cast<uint16_t>(std::stoi(portStr));
-        }
+        uint16_t parsedPort = 0;
+        if (!parsePort(portStr, &parsedPort))
+            return false;
+        out.port = parsedPort;
     }
 
     return !out.host.empty();
