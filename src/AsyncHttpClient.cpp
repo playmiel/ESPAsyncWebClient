@@ -15,8 +15,27 @@ static constexpr size_t kDefaultMaxHeaderBytes = 2800; // ~2.8 KiB
 static constexpr size_t kDefaultMaxBodyBytes = 8192;   // 8 KiB
 static constexpr size_t kMaxCookieCount = 16;
 static constexpr size_t kMaxCookieBytes = 4096;
-static const char* kPublicSuffixes[] = {"com",  "net",  "org", "gov", "edu", "mil", "int",
-                                        "co.uk", "ac.uk", "gov.uk", "uk",  "io",  "co"};
+static const char* kPublicSuffixes[] = {"com",
+                                        "net",
+                                        "org",
+                                        "gov",
+                                        "edu",
+                                        "mil",
+                                        "int",
+                                        "co.uk",
+                                        "ac.uk",
+                                        "gov.uk",
+                                        "uk",
+                                        "io",
+                                        "co",
+                                        "app",
+                                        "dev",
+                                        "github.io",
+                                        "web.app",
+                                        "pages.dev",
+                                        "vercel.app",
+                                        "firebaseapp.com",
+                                        "cloudfront.net"};
 
 static bool equalsIgnoreCase(const String& a, const char* b) {
     size_t lenA = a.length();
@@ -919,14 +938,20 @@ bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpReq
     newRequest->setNoStoreBody(context->request->getNoStoreBody());
 
     bool sameOrigin = isSameOrigin(context->request, newRequest);
+    auto isCrossOriginSensitiveHeader = [](const String& name) {
+        String lower = name;
+        lower.toLowerCase();
+        return lower.equals("authorization") || lower.equals("proxy-authorization") || lower.equals("cookie") ||
+               lower.equals("cookie2") || lower.startsWith("x-api-key") || lower.startsWith("x-auth-token") ||
+               lower.startsWith("x-access-token");
+    };
     const auto& headers = context->request->getHeaders();
     for (const auto& hdr : headers) {
         if (hdr.name.equalsIgnoreCase("Content-Length"))
             continue;
         if (dropBody && hdr.name.equalsIgnoreCase("Content-Type"))
             continue;
-        if (!sameOrigin &&
-            (hdr.name.equalsIgnoreCase("Authorization") || hdr.name.equalsIgnoreCase("Proxy-Authorization")))
+        if (!sameOrigin && isCrossOriginSensitiveHeader(hdr.name))
             continue;
         newRequest->setHeader(hdr.name, hdr.value);
     }
@@ -1090,8 +1115,6 @@ bool AsyncHttpClient::shouldEnforceBodyLimit(RequestContext* context) {
         return false;
     if (!context || !context->request)
         return true;
-    if (context->request->getNoStoreBody() && _bodyChunkCallback)
-        return false;
     return true;
 }
 

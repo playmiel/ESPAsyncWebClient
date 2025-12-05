@@ -1,14 +1,44 @@
 #include "UrlParser.h"
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 
 namespace UrlParser {
+
+static constexpr size_t kMaxUrlLength = 2048;
+static constexpr size_t kMaxHostLength = 255;
+static constexpr size_t kMaxPathLength = 1900;
 
 static bool startsWith(const std::string& s, const char* prefix) {
     size_t n = 0;
     while (prefix[n] != '\0')
         ++n; // strlen
     return s.size() >= n && s.compare(0, n, prefix) == 0;
+}
+
+static bool hasInvalidUrlChar(const std::string& url) {
+    for (char c : url) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc <= 0x1F || uc == 0x7F || c == '\r' || c == '\n' || c == ' ' || c == '\t')
+            return true;
+    }
+    return false;
+}
+
+static bool isValidHostChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.';
+}
+
+static bool isValidHost(const std::string& host) {
+    if (host.empty() || host.size() > kMaxHostLength)
+        return false;
+    if (host.front() == '.' || host.back() == '.')
+        return false;
+    for (char c : host) {
+        if (!isValidHostChar(c))
+            return false;
+    }
+    return true;
 }
 
 static bool parsePort(const std::string& portStr, uint16_t* out) {
@@ -30,6 +60,9 @@ static bool parsePort(const std::string& portStr, uint16_t* out) {
 }
 
 bool parse(const std::string& originalUrl, ParsedUrl& out) {
+    if (originalUrl.size() > kMaxUrlLength || hasInvalidUrlChar(originalUrl))
+        return false;
+
     std::string url = originalUrl; // working copy
     out.secure = false;
     out.port = 80;
@@ -79,6 +112,11 @@ bool parse(const std::string& originalUrl, ParsedUrl& out) {
             return false;
         out.port = parsedPort;
     }
+
+    if (!isValidHost(out.host))
+        return false;
+    if (out.path.size() > kMaxPathLength)
+        return false;
 
     return !out.host.empty();
 }
