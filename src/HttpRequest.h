@@ -121,8 +121,7 @@ class AsyncHttpRequest {
     // Accept-Encoding convenience (gzip)
     void enableGzipAcceptEncoding(bool enable = true);
 
-    // Avoid storing body in memory (use only streaming callbacks). Effective only if a response chunk callback
-    // (per-request or global) is present.
+    // Avoid storing response body in memory (use with global client.onBodyChunk(...) to consume the data).
     void setNoStoreBody(bool enable = true) {
         _noStoreBody = enable;
     }

@@ -382,7 +382,7 @@ Parameters:
 Notes:
 
 - Invoked for every segment (chunk or contiguous data block)
-- The full body is still accumulated internally (future option may allow disabling accumulation)
+- Unless `req->setNoStoreBody(true)` is enabled, the full body is still accumulated internally
 - `final` is invoked just before the success callback
 - Keep it lightweight (avoid blocking operations)
 
@@ -391,7 +391,7 @@ Notes:
 
 If `Content-Length` is present, the response is considered complete once that many bytes have been received. Extra bytes (if a misbehaving server sends more) are ignored. Without `Content-Length`, completion is determined by connection close.
 
-Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` (default) to disable the guard.
+Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` to disable the guard (this applies only when buffering the response body in memory).
 
 Likewise, guard against oversized or malicious header blocks via `client.setMaxHeaderBytes(limit)`. When the cumulative response headers exceed `limit` bytes before completion of `\r\n\r\n`, the request aborts with `HEADERS_TOO_LARGE`.
 

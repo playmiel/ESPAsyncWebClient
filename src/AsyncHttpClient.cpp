@@ -364,18 +364,22 @@ void AsyncHttpClient::setCookie(const char* name, const char* value, const char*
                                 bool secure) {
     if (!name || strlen(name) == 0)
         return;
+    int64_t now = currentTimeSeconds();
     StoredCookie cookie;
     cookie.name = String(name);
     cookie.value = value ? String(value) : String();
     cookie.path = (path && strlen(path) > 0) ? String(path) : String("/");
     cookie.domain = domain ? String(domain) : String();
     cookie.secure = secure;
+    cookie.createdAt = now;
+    cookie.lastAccessAt = now;
     if (!cookie.path.startsWith("/"))
         cookie.path = "/" + cookie.path;
     if (cookie.domain.startsWith("."))
         cookie.domain.remove(0, 1);
 
     lock();
+    purgeExpiredCookies(now);
     for (auto it = _cookies.begin(); it != _cookies.end();) {
         if (it->name.equalsIgnoreCase(cookie.name) && it->domain.equalsIgnoreCase(cookie.domain) &&
             it->path.equals(cookie.path)) {
@@ -384,8 +388,11 @@ void AsyncHttpClient::setCookie(const char* name, const char* value, const char*
             ++it;
         }
     }
-    if (!cookie.value.isEmpty())
+    if (!cookie.value.isEmpty()) {
+        if (_cookies.size() >= kMaxCookieCount)
+            evictOneCookieLocked();
         _cookies.push_back(cookie);
+    }
     unlock();
 }
 
@@ -568,7 +575,10 @@ void AsyncHttpClient::handleConnect(RequestContext* context) {
 }
 
 void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len) {
-    context->responseBuffer.concat(data, len);
+    bool storeBody = context && context->request && !context->request->getNoStoreBody();
+    bool bufferThisChunk = context && (!context->headersComplete || context->chunked);
+    if (bufferThisChunk)
+        context->responseBuffer.concat(data, len);
     bool enforceLimit = shouldEnforceBodyLimit(context);
     auto wouldExceedLimit = [&](size_t incoming) -> bool {
         if (!enforceLimit)
@@ -607,7 +617,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                         triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                         return;
                     }
-                    if (!context->request->getNoStoreBody()) {
+                    if (storeBody) {
                         context->response->appendBody(context->responseBuffer.c_str(), incomingLen);
                     }
                     context->receivedContentLength += incomingLen;
@@ -626,7 +636,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
             return;
         }
-        if (!context->request->getNoStoreBody()) {
+        if (storeBody) {
             context->response->appendBody(data, len);
         }
         context->receivedContentLength += len;
@@ -732,7 +742,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             return;
         }
         const char* chunkPtr = context->responseBuffer.c_str();
-        if (!context->request->getNoStoreBody()) {
+        if (storeBody) {
             context->response->appendBody(chunkPtr, chunkLen);
         }
         context->receivedContentLength += chunkLen;
@@ -846,7 +856,7 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
                     parsed = 0;
                 context->expectedContentLength = (size_t)parsed;
                 context->response->setContentLength(context->expectedContentLength);
-                bool storeBody = !(context->request->getNoStoreBody() && _bodyChunkCallback);
+                bool storeBody = !context->request->getNoStoreBody();
                 if (storeBody)
                     context->response->reserveBody(context->expectedContentLength);
             } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
@@ -1201,6 +1211,8 @@ bool AsyncHttpClient::shouldEnforceBodyLimit(RequestContext* context) {
         return false;
     if (!context || !context->request)
         return true;
+    if (context->request->getNoStoreBody())
+        return false;
     return true;
 }
 
@@ -1484,10 +1496,11 @@ bool AsyncHttpClient::pathMatches(const String& cookiePath, const String& reques
     return req.length() > cpath.length() && req.charAt(cpath.length()) == '/';
 }
 
-bool AsyncHttpClient::cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request) const {
+bool AsyncHttpClient::cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request,
+                                           int64_t nowSeconds) const {
     if (!request)
         return false;
-    if (isCookieExpired(cookie, currentTimeSeconds()))
+    if (isCookieExpired(cookie, nowSeconds))
         return false;
     if (cookie.secure && !request->isSecure())
         return false;
@@ -1512,25 +1525,85 @@ void AsyncHttpClient::purgeExpiredCookies(int64_t nowSeconds) {
     }
 }
 
+static uint8_t countDomainDots(const String& domain) {
+    uint8_t dots = 0;
+    for (size_t i = 0; i < domain.length(); ++i) {
+        if (domain.charAt(i) == '.')
+            ++dots;
+    }
+    return dots;
+}
+
+void AsyncHttpClient::evictOneCookieLocked() {
+    if (_cookies.empty())
+        return;
+    size_t bestIndex = 0;
+    for (size_t i = 1; i < _cookies.size(); ++i) {
+        const StoredCookie& best = _cookies[bestIndex];
+        const StoredCookie& candidate = _cookies[i];
+
+        if (candidate.lastAccessAt != best.lastAccessAt) {
+            if (candidate.lastAccessAt < best.lastAccessAt)
+                bestIndex = i;
+            continue;
+        }
+
+        bool candidateSession = candidate.expiresAt == -1;
+        bool bestSession = best.expiresAt == -1;
+        if (candidateSession != bestSession) {
+            if (candidateSession)
+                bestIndex = i;
+            continue;
+        }
+
+        uint8_t candidateDots = countDomainDots(candidate.domain);
+        uint8_t bestDots = countDomainDots(best.domain);
+        if (candidateDots != bestDots) {
+            if (candidateDots < bestDots)
+                bestIndex = i;
+            continue;
+        }
+
+        if (candidate.domain.length() != best.domain.length()) {
+            if (candidate.domain.length() < best.domain.length())
+                bestIndex = i;
+            continue;
+        }
+
+        if (candidate.path.length() != best.path.length()) {
+            if (candidate.path.length() < best.path.length())
+                bestIndex = i;
+            continue;
+        }
+
+        if (candidate.createdAt != best.createdAt) {
+            if (candidate.createdAt < best.createdAt)
+                bestIndex = i;
+            continue;
+        }
+    }
+    _cookies.erase(_cookies.begin() +
+                   static_cast<std::vector<StoredCookie>::difference_type>(bestIndex));
+}
+
 void AsyncHttpClient::applyCookies(AsyncHttpRequest* request) {
     if (!request)
         return;
     int64_t now = currentTimeSeconds();
     String cookieHeader;
-    std::vector<StoredCookie> cookiesCopy;
     lock();
     purgeExpiredCookies(now);
-    cookiesCopy = _cookies;
-    unlock();
     size_t estimatedLen = 0;
-    if (!cookiesCopy.empty()) {
-        estimatedLen += (cookiesCopy.size() - 1) * 2; // separators
-        for (const auto& cookie : cookiesCopy)
-            estimatedLen += cookie.name.length() + 1 + cookie.value.length();
-        cookieHeader.reserve(estimatedLen);
+    for (const auto& cookie : _cookies) {
+        if (cookieMatchesRequest(cookie, request, now))
+            estimatedLen += cookie.name.length() + 1 + cookie.value.length() + 2;
     }
-    for (const auto& cookie : cookiesCopy) {
-        if (cookieMatchesRequest(cookie, request)) {
+    if (estimatedLen >= 2)
+        estimatedLen -= 2;
+    cookieHeader.reserve(estimatedLen);
+    for (auto& cookie : _cookies) {
+        if (cookieMatchesRequest(cookie, request, now)) {
+            cookie.lastAccessAt = now;
             if (!cookieHeader.isEmpty())
                 cookieHeader += "; ";
             cookieHeader += cookie.name;
@@ -1538,6 +1611,7 @@ void AsyncHttpClient::applyCookies(AsyncHttpRequest* request) {
             cookieHeader += cookie.value;
         }
     }
+    unlock();
     if (cookieHeader.isEmpty())
         return;
     String existing = request->getHeader("Cookie");
@@ -1623,6 +1697,8 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
     if (payloadSize > kMaxCookieBytes)
         return;
     cookie.expiresAt = expiresAt;
+    cookie.createdAt = now;
+    cookie.lastAccessAt = now;
     if (isCookieExpired(cookie, now))
         remove = true;
 
@@ -1638,7 +1714,7 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
     }
     if (!remove) {
         if (_cookies.size() >= kMaxCookieCount)
-            _cookies.erase(_cookies.begin());
+            evictOneCookieLocked();
         _cookies.push_back(cookie);
     }
     unlock();

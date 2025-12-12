@@ -107,6 +107,46 @@ static void test_expires_and_max_age_enforcement() {
     TEST_ASSERT_TRUE(req3.getHeader("Cookie").isEmpty());
 }
 
+static bool hasCookieNamed(const AsyncHttpClient& client, const char* name) {
+    for (const auto& cookie : client._cookies) {
+        if (cookie.name.equalsIgnoreCase(name))
+            return true;
+    }
+    return false;
+}
+
+static void test_cookie_jar_eviction_is_lru_session_then_scope() {
+    AsyncHttpClient client;
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://example.com/");
+
+    for (int i = 0; i < 16; ++i) {
+        client.storeResponseCookie(&req, String("c") + String(i) + "=1; Path=/");
+    }
+    TEST_ASSERT_EQUAL(16, (int)client._cookies.size());
+
+    for (size_t i = 0; i < client._cookies.size(); ++i) {
+        client._cookies[i].createdAt = (int64_t)i;
+        client._cookies[i].lastAccessAt = 1000;
+    }
+
+    client._cookies[1].expiresAt = 2000000000; // persistent
+    client._cookies[1].lastAccessAt = 1;
+    client._cookies[2].expiresAt = -1; // session
+    client._cookies[2].path = "/";
+    client._cookies[2].lastAccessAt = 1;
+    client._cookies[3].expiresAt = -1; // session, more specific scope
+    client._cookies[3].path = "/admin";
+    client._cookies[3].lastAccessAt = 1;
+
+    client.storeResponseCookie(&req, "new=1; Path=/");
+    TEST_ASSERT_EQUAL(16, (int)client._cookies.size());
+
+    TEST_ASSERT_TRUE(hasCookieNamed(client, "c1"));
+    TEST_ASSERT_FALSE(hasCookieNamed(client, "c2"));
+    TEST_ASSERT_TRUE(hasCookieNamed(client, "c3"));
+    TEST_ASSERT_TRUE(hasCookieNamed(client, "new"));
+}
+
 int runUnityTests() {
     UNITY_BEGIN();
     RUN_TEST(test_domain_matching_subdomains);
@@ -116,6 +156,7 @@ int runUnityTests() {
     RUN_TEST(test_rejects_mismatched_domain_attribute);
     RUN_TEST(test_cookie_path_matching_rfc6265_rule);
     RUN_TEST(test_expires_and_max_age_enforcement);
+    RUN_TEST(test_cookie_jar_eviction_is_lru_session_then_scope);
     return UNITY_END();
 }
 

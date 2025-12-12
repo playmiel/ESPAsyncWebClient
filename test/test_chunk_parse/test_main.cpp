@@ -12,6 +12,8 @@ static bool gErrorCalled = false;
 static HttpClientError gLastError = CONNECTION_FAILED;
 static String gLastBody;
 static std::vector<HttpHeader> gLastTrailers;
+static String gStreamedBody;
+static bool gStreamFinalCalled = false;
 
 static void resetState() {
     gSuccessCalled = false;
@@ -19,6 +21,8 @@ static void resetState() {
     gLastError = CONNECTION_FAILED;
     gLastBody = "";
     gLastTrailers.clear();
+    gStreamedBody = "";
+    gStreamFinalCalled = false;
 }
 
 static String trailerValue(const char* name) {
@@ -67,8 +71,6 @@ static void test_chunk_trailers_are_parsed() {
     feed("X-Meta: done\r\n");
     feed("\r\n");
 
-    client.handleDisconnect(ctx);
-
     TEST_ASSERT_TRUE(gSuccessCalled);
     TEST_ASSERT_FALSE(gErrorCalled);
     TEST_ASSERT_EQUAL_STRING("Wikipedia", gLastBody.c_str());
@@ -89,8 +91,6 @@ static void test_chunk_missing_crlf_is_error() {
 
     feed("4\r\n");
     feed("Wiki\n"); // missing CR before LF terminator
-
-    client.handleDisconnect(ctx);
 
     TEST_ASSERT_TRUE(gErrorCalled);
     TEST_ASSERT_FALSE(gSuccessCalled);
@@ -116,12 +116,39 @@ static void test_chunk_body_limit_enforced() {
     TEST_ASSERT_EQUAL_INT(MAX_BODY_SIZE_EXCEEDED, gLastError);
 }
 
+static void test_chunk_body_limit_ignored_for_no_store_streaming() {
+    resetState();
+    AsyncHttpClient client;
+    client.setMaxBodySize(5);
+    client.onBodyChunk([](const char* data, size_t len, bool final) {
+        if (final) {
+            gStreamFinalCalled = true;
+            return;
+        }
+        if (data && len > 0)
+            gStreamedBody.concat(data, len);
+    });
+    auto ctx = makeContext(client);
+    ctx->headersComplete = true;
+    ctx->chunked = true;
+    ctx->request->setNoStoreBody(true);
+
+    auto feed = [&](const char* data) { client.handleData(ctx, const_cast<char*>(data), strlen(data)); };
+    feed("6\r\nTooBig\r\n0\r\n\r\n");
+
+    TEST_ASSERT_TRUE(gSuccessCalled);
+    TEST_ASSERT_FALSE(gErrorCalled);
+    TEST_ASSERT_EQUAL_STRING("TooBig", gStreamedBody.c_str());
+    TEST_ASSERT_TRUE(gStreamFinalCalled);
+}
+
 void setup() {
     delay(2000);
     UNITY_BEGIN();
     RUN_TEST(test_chunk_trailers_are_parsed);
     RUN_TEST(test_chunk_missing_crlf_is_error);
     RUN_TEST(test_chunk_body_limit_enforced);
+    RUN_TEST(test_chunk_body_limit_ignored_for_no_store_streaming);
     UNITY_END();
 }
 
