@@ -32,7 +32,7 @@ static void cleanupContext(AsyncHttpClient::RequestContext* ctx) {
 static void test_redirect_same_host_get() {
     AsyncHttpClient client;
     client.setFollowRedirects(true, 3);
-    auto ctx = makeRedirectContext(HTTP_POST, "http://example.com/path");
+    auto ctx = makeRedirectContext(HTTP_METHOD_POST, "http://example.com/path");
     ctx->request->setHeader("Authorization", "Bearer token");
     ctx->request->setHeader("Content-Type", "text/plain");
     ctx->request->setBody("payload");
@@ -47,7 +47,7 @@ static void test_redirect_same_host_get() {
 
     TEST_ASSERT_TRUE(decision);
     TEST_ASSERT_NOT_NULL(newReq);
-    TEST_ASSERT_EQUAL(HTTP_GET, newReq->getMethod());
+    TEST_ASSERT_EQUAL(HTTP_METHOD_GET, newReq->getMethod());
     TEST_ASSERT_TRUE(newReq->getBody().isEmpty());
     TEST_ASSERT_EQUAL_STRING("Bearer token", newReq->getHeader("Authorization").c_str());
     TEST_ASSERT_TRUE(newReq->getHeader("Content-Type").isEmpty());
@@ -59,7 +59,7 @@ static void test_redirect_same_host_get() {
 static void test_redirect_cross_host_preserve_method_strip_auth() {
     AsyncHttpClient client;
     client.setFollowRedirects(true, 3);
-    auto ctx = makeRedirectContext(HTTP_POST, "http://example.com/login");
+    auto ctx = makeRedirectContext(HTTP_METHOD_POST, "http://example.com/login");
     ctx->request->setHeader("Authorization", "Bearer token");
     ctx->request->setHeader("Proxy-Authorization", "Basic abc");
     ctx->request->setHeader("Content-Type", "application/json");
@@ -75,7 +75,7 @@ static void test_redirect_cross_host_preserve_method_strip_auth() {
 
     TEST_ASSERT_TRUE(decision);
     TEST_ASSERT_NOT_NULL(newReq);
-    TEST_ASSERT_EQUAL(HTTP_POST, newReq->getMethod());
+    TEST_ASSERT_EQUAL(HTTP_METHOD_POST, newReq->getMethod());
     TEST_ASSERT_EQUAL_STRING("{\"name\":\"demo\"}", newReq->getBody().c_str());
     TEST_ASSERT_TRUE(newReq->getHeader("Authorization").isEmpty());
     TEST_ASSERT_TRUE(newReq->getHeader("Proxy-Authorization").isEmpty());
@@ -88,7 +88,7 @@ static void test_redirect_cross_host_preserve_method_strip_auth() {
 static void test_redirect_too_many_hops() {
     AsyncHttpClient client;
     client.setFollowRedirects(true, 2);
-    auto ctx = makeRedirectContext(HTTP_GET, "http://example.com/a");
+    auto ctx = makeRedirectContext(HTTP_METHOD_GET, "http://example.com/a");
     ctx->redirectCount = 2;
     ctx->response->setStatusCode(302);
     ctx->response->setHeader("Location", "/b");
@@ -109,7 +109,7 @@ static void test_redirect_too_many_hops() {
 static void test_redirect_to_https_supported() {
     AsyncHttpClient client;
     client.setFollowRedirects(true, 3);
-    auto ctx = makeRedirectContext(HTTP_GET, "http://example.com/path");
+    auto ctx = makeRedirectContext(HTTP_METHOD_GET, "http://example.com/path");
     ctx->response->setStatusCode(301);
     ctx->response->setHeader("Location", "https://secure.example.com/next");
 
@@ -142,7 +142,7 @@ static void test_header_limit_triggers_error() {
     AsyncHttpClient client;
     client.setMaxHeaderBytes(32);
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/");
+    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
     ctx->response = new AsyncHttpResponse();
     ctx->onError = [](HttpClientError error, const char* message) {
         (void)message;
@@ -166,7 +166,7 @@ static void test_header_limit_allows_body_bytes_after_headers() {
     AsyncHttpClient client;
     client.setMaxHeaderBytes(48);
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/");
+    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
     ctx->response = new AsyncHttpResponse();
     ctx->onError = [](HttpClientError error, const char* message) {
         (void)message;
@@ -189,13 +189,13 @@ static void test_header_limit_allows_body_bytes_after_headers() {
 static void test_cookie_roundtrip_basic() {
     AsyncHttpClient client;
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/login");
+    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/login");
     ctx->response = new AsyncHttpResponse();
 
     String frame = "HTTP/1.1 200 OK\r\nSet-Cookie: session=abc123; Path=/\r\nContent-Length: 0\r\n\r\n";
     TEST_ASSERT_TRUE(client.parseResponseHeaders(ctx, frame));
 
-    AsyncHttpRequest follow(HTTP_GET, "http://example.com/home");
+    AsyncHttpRequest follow(HTTP_METHOD_GET, "http://example.com/home");
     client.applyCookies(&follow);
     TEST_ASSERT_EQUAL_STRING("session=abc123", follow.getHeader("Cookie").c_str());
 
@@ -205,21 +205,21 @@ static void test_cookie_roundtrip_basic() {
 static void test_cookie_path_and_secure_rules() {
     AsyncHttpClient client;
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/login");
+    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/login");
     ctx->response = new AsyncHttpResponse();
 
     String frame = "HTTP/1.1 200 OK\r\nSet-Cookie: admin=1; Path=/admin; Secure\r\nContent-Length: 0\r\n\r\n";
     TEST_ASSERT_TRUE(client.parseResponseHeaders(ctx, frame));
 
-    AsyncHttpRequest wrongPath(HTTP_GET, "http://example.com/public");
+    AsyncHttpRequest wrongPath(HTTP_METHOD_GET, "http://example.com/public");
     client.applyCookies(&wrongPath);
     TEST_ASSERT_TRUE(wrongPath.getHeader("Cookie").isEmpty());
 
-    AsyncHttpRequest insecureTarget(HTTP_GET, "http://example.com/admin/dashboard");
+    AsyncHttpRequest insecureTarget(HTTP_METHOD_GET, "http://example.com/admin/dashboard");
     client.applyCookies(&insecureTarget);
     TEST_ASSERT_TRUE(insecureTarget.getHeader("Cookie").isEmpty());
 
-    AsyncHttpRequest secureTarget(HTTP_GET, "https://example.com/admin/dashboard");
+    AsyncHttpRequest secureTarget(HTTP_METHOD_GET, "https://example.com/admin/dashboard");
     client.applyCookies(&secureTarget);
     TEST_ASSERT_EQUAL_STRING("admin=1", secureTarget.getHeader("Cookie").c_str());
 

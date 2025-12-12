@@ -232,11 +232,17 @@ class AsyncHttpClient {
         String domain;
         String path;
         bool secure = false;
+        int64_t expiresAt = -1; // -1 means no expiration set
+        int64_t createdAt = 0;
+        int64_t lastAccessAt = 0;
     };
     std::vector<StoredCookie> _cookies;
     void applyCookies(AsyncHttpRequest* request);
     void storeResponseCookie(const AsyncHttpRequest* request, const String& setCookieValue);
-    bool cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request) const;
+    bool cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request, int64_t nowSeconds) const;
+    bool isCookieExpired(const StoredCookie& cookie, int64_t nowSeconds) const;
+    void purgeExpiredCookies(int64_t nowSeconds);
+    void evictOneCookieLocked();
     bool domainMatches(const String& cookieDomain, const String& host) const;
     bool pathMatches(const String& cookiePath, const String& requestPath) const;
     bool normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided) const;

@@ -101,17 +101,17 @@ bool AsyncHttpRequest::parseUrl(const String& url) {
 
 String AsyncHttpRequest::methodToString() const {
     switch (_method) {
-    case HTTP_GET:
+    case HTTP_METHOD_GET:
         return "GET";
-    case HTTP_POST:
+    case HTTP_METHOD_POST:
         return "POST";
-    case HTTP_PUT:
+    case HTTP_METHOD_PUT:
         return "PUT";
-    case HTTP_DELETE:
+    case HTTP_METHOD_DELETE:
         return "DELETE";
-    case HTTP_HEAD:
+    case HTTP_METHOD_HEAD:
         return "HEAD";
-    case HTTP_PATCH:
+    case HTTP_METHOD_PATCH:
         return "PATCH";
     default:
         return "GET";

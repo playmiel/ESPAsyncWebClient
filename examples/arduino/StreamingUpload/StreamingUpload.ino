@@ -47,7 +47,7 @@ void setup() {
     pattern.total = 10 * 1024;
     pattern.sent = 0;
 
-    AsyncHttpRequest* req = new AsyncHttpRequest(HTTP_POST, "http://httpbin.org/post");
+    AsyncHttpRequest* req = new AsyncHttpRequest(HTTP_METHOD_POST, "http://httpbin.org/post");
     req->addQueryParam("mode", "stream");
     req->addQueryParam("unit", "bytes");
     req->finalizeQueryParams();
