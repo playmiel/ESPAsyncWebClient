@@ -66,6 +66,7 @@ bool parse(const std::string& originalUrl, ParsedUrl& out) {
     std::string url = originalUrl; // working copy
     out.secure = false;
     out.port = 80;
+    out.schemeImplicit = false;
 
     if (startsWith(url, "https://")) {
         out.secure = true;
@@ -76,9 +77,10 @@ bool parse(const std::string& originalUrl, ParsedUrl& out) {
         out.port = 80;
         url.erase(0, 7);
     } else {
-        // No scheme provided -> default http
-        out.secure = false;
-        out.port = 80;
+        // No scheme provided -> default to HTTPS and signal implicit scheme
+        out.secure = true;
+        out.port = 443;
+        out.schemeImplicit = true;
     }
 
     // Find first '/' and first '?'

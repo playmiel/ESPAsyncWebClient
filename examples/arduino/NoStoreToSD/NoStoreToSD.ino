@@ -31,7 +31,7 @@ static bool beginDownload(const char* url, const char* destinationPath) {
 
     currentPath = destinationPath;
 
-    AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_GET, url);
+    AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_METHOD_GET, url);
     request->setNoStoreBody(true); // only stream via onBodyChunk
 
     uint32_t id = client.request(

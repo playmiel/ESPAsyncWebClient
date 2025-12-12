@@ -32,7 +32,7 @@ static String trailerValue(const char* name) {
 
 static AsyncHttpClient::RequestContext* makeContext(AsyncHttpClient& client) {
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/res");
+    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/res");
     ctx->response = new AsyncHttpResponse();
     ctx->transport = nullptr;
     ctx->onSuccess = [](AsyncHttpResponse* resp) {

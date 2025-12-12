@@ -15,7 +15,7 @@ static void test_domain_matching_subdomains() {
 
 static void test_multiple_cookies_and_deduplication() {
     AsyncHttpClient client;
-    AsyncHttpRequest req(HTTP_GET, "http://example.com/path");
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://example.com/path");
 
     client.storeResponseCookie(&req, "a=1; Path=/");
     client.storeResponseCookie(&req, "b=2; Path=/");
@@ -37,7 +37,7 @@ static void test_multiple_cookies_and_deduplication() {
 
 static void test_max_age_removes_cookie() {
     AsyncHttpClient client;
-    AsyncHttpRequest req(HTTP_GET, "http://example.com/");
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://example.com/");
     client.storeResponseCookie(&req, "temp=1; Path=/");
     client.storeResponseCookie(&req, "temp=0; Max-Age=0; Path=/");
 
@@ -49,21 +49,21 @@ static void test_max_age_removes_cookie() {
 
 static void test_clear_and_public_set_cookie_api() {
     AsyncHttpClient client;
-    AsyncHttpRequest req(HTTP_GET, "http://example.com/");
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://example.com/");
 
     client.setCookie("manual", "123", "/", "example.com", false);
     client.applyCookies(&req);
     TEST_ASSERT_EQUAL_STRING("manual=123", req.getHeader("Cookie").c_str());
 
     client.clearCookies();
-    AsyncHttpRequest req2(HTTP_GET, "http://example.com/");
+    AsyncHttpRequest req2(HTTP_METHOD_GET, "http://example.com/");
     client.applyCookies(&req2);
     TEST_ASSERT_TRUE(req2.getHeader("Cookie").isEmpty());
 }
 
 static void test_rejects_mismatched_domain_attribute() {
     AsyncHttpClient client;
-    AsyncHttpRequest req(HTTP_GET, "http://example.com/");
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://example.com/");
 
     client.storeResponseCookie(&req, "evil=1; Domain=evil.com; Path=/");
     client.applyCookies(&req);
@@ -73,15 +73,38 @@ static void test_rejects_mismatched_domain_attribute() {
 
 static void test_cookie_path_matching_rfc6265_rule() {
     AsyncHttpClient client;
-    AsyncHttpRequest req(HTTP_GET, "http://example.com/administrator");
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://example.com/administrator");
     client.storeResponseCookie(&req, "adminonly=1; Path=/admin");
 
     client.applyCookies(&req);
     TEST_ASSERT_TRUE(req.getHeader("Cookie").isEmpty());
 
-    AsyncHttpRequest req2(HTTP_GET, "http://example.com/admin/settings");
+    AsyncHttpRequest req2(HTTP_METHOD_GET, "http://example.com/admin/settings");
     client.applyCookies(&req2);
     TEST_ASSERT_EQUAL_STRING("adminonly=1", req2.getHeader("Cookie").c_str());
+}
+
+static void test_expires_and_max_age_enforcement() {
+    AsyncHttpClient client;
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://example.com/");
+
+    client.storeResponseCookie(&req, "persist=1; Expires=Fri, 01 Jan 2100 00:00:00 GMT; Path=/");
+    client.applyCookies(&req);
+    TEST_ASSERT_EQUAL_STRING("persist=1", req.getHeader("Cookie").c_str());
+    TEST_ASSERT_EQUAL(1, (int)client._cookies.size());
+
+    // Force the stored cookie to be expired and ensure it is not sent
+    client._cookies[0].expiresAt = 0; // Epoch start; always treated as expired
+    AsyncHttpRequest req2(HTTP_METHOD_GET, "http://example.com/");
+    client.applyCookies(&req2);
+    TEST_ASSERT_TRUE(req2.getHeader("Cookie").isEmpty());
+    TEST_ASSERT_EQUAL(0, (int)client._cookies.size());
+
+    // Past Expires attribute should remove the cookie immediately
+    client.storeResponseCookie(&req, "persist=1; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/");
+    AsyncHttpRequest req3(HTTP_METHOD_GET, "http://example.com/");
+    client.applyCookies(&req3);
+    TEST_ASSERT_TRUE(req3.getHeader("Cookie").isEmpty());
 }
 
 int runUnityTests() {
@@ -92,6 +115,7 @@ int runUnityTests() {
     RUN_TEST(test_clear_and_public_set_cookie_api);
     RUN_TEST(test_rejects_mismatched_domain_attribute);
     RUN_TEST(test_cookie_path_matching_rfc6265_rule);
+    RUN_TEST(test_expires_and_max_age_enforcement);
     return UNITY_END();
 }
 

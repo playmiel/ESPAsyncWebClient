@@ -220,7 +220,7 @@ client.get("http://example.com/chunked", [](AsyncHttpResponse* response) {
 
 ```cpp
 // Create custom request
-AsyncHttpRequest request(HTTP_POST, "http://example.com/api");
+AsyncHttpRequest request(HTTP_METHOD_POST, "http://example.com/api");
 
 // Set headers
 request.setHeader("Content-Type", "application/json");
@@ -236,6 +236,11 @@ request.setTimeout(10000);
 // Execute
 client.request(&request, onSuccess, onError);
 ```
+
+HTTP method enums are now prefixed (`HTTP_METHOD_GET`, `HTTP_METHOD_POST`, etc.) to avoid collisions with
+`ESPAsyncWebServer`'s `HTTP_GET`/`HTTP_POST` values. Legacy aliases can be re-enabled by defining
+`ASYNC_HTTP_ENABLE_LEGACY_METHOD_ALIASES` before including `ESPAsyncWebClient.h` (only do this if you are not also
+including `ESPAsyncWebServer.h` in the same translation unit).
 
 ## Examples
 
@@ -282,7 +287,7 @@ client.setHeader("X-API-Key", "your-api-key");
 client.setUserAgent("MyDevice/1.0");
 
 // Or set per-request headers
-AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_GET, "http://example.com");
+AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com");
 request->setHeader("Authorization", "Bearer token");
 client.request(request, onSuccess);
 ```
@@ -344,7 +349,7 @@ client.setHeader("Accept", "application/json");
 ### Per-Request Settings
 
 ```cpp
-AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_POST, url);
+AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_METHOD_POST, url);
 request->setTimeout(30000);  // 30 second timeout for this request
 request->setHeader("Content-Type", "application/xml");
 request->setBody(xmlData);
