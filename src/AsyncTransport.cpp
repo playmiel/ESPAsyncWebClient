@@ -468,16 +468,17 @@ void AsyncTlsTransport::continueHandshake() {
 }
 
 bool AsyncTlsTransport::verifyPeerCertificate() {
-    if (_config.insecure)
-        return true;
     uint32_t res = mbedtls_ssl_get_verify_result(&_ssl);
-    if (res != 0) {
+    bool requireCaValidation = !_config.insecure;
+    if (requireCaValidation && res != 0) {
         fail(TLS_CERT_INVALID, "TLS certificate validation failed");
         return false;
     }
-    if (!_fingerprintBytes.empty() && !verifyFingerprint()) {
-        fail(TLS_FINGERPRINT_MISMATCH, "TLS fingerprint mismatch");
-        return false;
+    if (!_fingerprintBytes.empty()) {
+        if (!verifyFingerprint()) {
+            fail(TLS_FINGERPRINT_MISMATCH, "TLS fingerprint mismatch");
+            return false;
+        }
     }
     return true;
 }
