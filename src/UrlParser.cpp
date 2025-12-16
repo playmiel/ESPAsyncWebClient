@@ -109,12 +109,10 @@ bool parse(const std::string& originalUrl, ParsedUrl& out) {
     if (colon != std::string::npos) {
         std::string portStr = out.host.substr(colon + 1);
         out.host = out.host.substr(0, colon);
-        if (!portStr.empty()) {
-            uint16_t parsedPort = 0;
-            if (!parsePort(portStr, &parsedPort))
-                return false;
-            out.port = parsedPort;
-        }
+        uint16_t parsedPort = 0;
+        if (!parsePort(portStr, &parsedPort))
+            return false;
+        out.port = parsedPort;
     }
 
     if (!isValidHost(out.host))
