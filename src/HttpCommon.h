@@ -11,7 +11,7 @@
 
 // Library version (single source of truth inside code). Keep in sync with library.json and library.properties.
 #ifndef ESP_ASYNC_WEB_CLIENT_VERSION
-#define ESP_ASYNC_WEB_CLIENT_VERSION "1.1.2"
+#define ESP_ASYNC_WEB_CLIENT_VERSION "1.1.3"
 #endif
 
 struct HttpHeader {
