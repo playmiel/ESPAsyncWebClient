@@ -1,6 +1,13 @@
 #include "UrlParser.h"
+#include <cctype>
+#include <cerrno>
+#include <cstdlib>
 
 namespace UrlParser {
+
+static constexpr size_t kMaxUrlLength = 2048;
+static constexpr size_t kMaxHostLength = 255;
+static constexpr size_t kMaxPathLength = 1900;
 
 static bool startsWith(const std::string& s, const char* prefix) {
     size_t n = 0;
@@ -9,10 +16,57 @@ static bool startsWith(const std::string& s, const char* prefix) {
     return s.size() >= n && s.compare(0, n, prefix) == 0;
 }
 
+static bool hasInvalidUrlChar(const std::string& url) {
+    for (char c : url) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc <= 0x1F || uc == 0x7F || c == '\r' || c == '\n' || c == ' ' || c == '\t')
+            return true;
+    }
+    return false;
+}
+
+static bool isValidHostChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.';
+}
+
+static bool isValidHost(const std::string& host) {
+    if (host.empty() || host.size() > kMaxHostLength)
+        return false;
+    if (host.front() == '.' || host.back() == '.')
+        return false;
+    for (char c : host) {
+        if (!isValidHostChar(c))
+            return false;
+    }
+    return true;
+}
+
+static bool parsePort(const std::string& portStr, uint16_t* out) {
+    if (!out || portStr.empty())
+        return false;
+    for (char c : portStr) {
+        if (c < '0' || c > '9')
+            return false;
+    }
+    errno = 0;
+    char* end = nullptr;
+    unsigned long val = std::strtoul(portStr.c_str(), &end, 10);
+    if (end == portStr.c_str() || *end != '\0')
+        return false;
+    if (errno == ERANGE || val > 65535)
+        return false;
+    *out = static_cast<uint16_t>(val);
+    return true;
+}
+
 bool parse(const std::string& originalUrl, ParsedUrl& out) {
+    if (originalUrl.size() > kMaxUrlLength || hasInvalidUrlChar(originalUrl))
+        return false;
+
     std::string url = originalUrl; // working copy
     out.secure = false;
     out.port = 80;
+    out.schemeImplicit = false;
 
     if (startsWith(url, "https://")) {
         out.secure = true;
@@ -23,9 +77,10 @@ bool parse(const std::string& originalUrl, ParsedUrl& out) {
         out.port = 80;
         url.erase(0, 7);
     } else {
-        // No scheme provided -> default http
-        out.secure = false;
-        out.port = 80;
+        // No scheme provided -> default to HTTPS and signal implicit scheme
+        out.secure = true;
+        out.port = 443;
+        out.schemeImplicit = true;
     }
 
     // Find first '/' and first '?'
@@ -55,9 +110,17 @@ bool parse(const std::string& originalUrl, ParsedUrl& out) {
         std::string portStr = out.host.substr(colon + 1);
         out.host = out.host.substr(0, colon);
         if (!portStr.empty()) {
-            out.port = static_cast<uint16_t>(std::stoi(portStr));
+            uint16_t parsedPort = 0;
+            if (!parsePort(portStr, &parsedPort))
+                return false;
+            out.port = parsedPort;
         }
     }
+
+    if (!isValidHost(out.host))
+        return false;
+    if (out.path.size() > kMaxPathLength)
+        return false;
 
     return !out.host.empty();
 }

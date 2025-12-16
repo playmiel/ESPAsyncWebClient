@@ -7,7 +7,35 @@
 #include <memory>
 #include "HttpCommon.h"
 
-enum HttpMethod { HTTP_GET, HTTP_POST, HTTP_PUT, HTTP_DELETE, HTTP_HEAD, HTTP_PATCH };
+enum HttpMethod {
+    HTTP_METHOD_GET,
+    HTTP_METHOD_POST,
+    HTTP_METHOD_PUT,
+    HTTP_METHOD_DELETE,
+    HTTP_METHOD_HEAD,
+    HTTP_METHOD_PATCH
+};
+
+#ifdef ASYNC_HTTP_ENABLE_LEGACY_METHOD_ALIASES
+#ifndef HTTP_GET
+#define HTTP_GET HTTP_METHOD_GET
+#endif
+#ifndef HTTP_POST
+#define HTTP_POST HTTP_METHOD_POST
+#endif
+#ifndef HTTP_PUT
+#define HTTP_PUT HTTP_METHOD_PUT
+#endif
+#ifndef HTTP_DELETE
+#define HTTP_DELETE HTTP_METHOD_DELETE
+#endif
+#ifndef HTTP_HEAD
+#define HTTP_HEAD HTTP_METHOD_HEAD
+#endif
+#ifndef HTTP_PATCH
+#define HTTP_PATCH HTTP_METHOD_PATCH
+#endif
+#endif // ASYNC_HTTP_ENABLE_LEGACY_METHOD_ALIASES
 
 struct AsyncHttpTLSConfig;
 
@@ -100,8 +128,7 @@ class AsyncHttpRequest {
     // Accept-Encoding convenience (gzip)
     void enableGzipAcceptEncoding(bool enable = true);
 
-    // Avoid storing body in memory (use only streaming callbacks). Effective only if a response chunk callback
-    // (per-request or global) is present.
+    // Avoid storing response body in memory (use with global client.onBodyChunk(...) to consume the data).
     void setNoStoreBody(bool enable = true) {
         _noStoreBody = enable;
     }

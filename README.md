@@ -23,7 +23,7 @@ An asynchronous HTTP client library for ESP32 microcontrollers, built on top of 
 - ✅ **Multiple simultaneous requests** - Handle multiple requests concurrently
 - ✅ **Chunked transfer decoding** - Validates framing and exposes parsed trailers
 - ✅ **Optional redirect following** - Follow 301/302/303 (converted to GET) and 307/308 (method preserved)
-- ✅ **Header & body guards** - Limit buffered response headers/body to avoid runaway responses
+- ✅ **Header & body guards** - Limits buffered headers (~2.8 KiB) and body (8 KiB) by default to avoid runaway responses
 - ✅ **Zero-copy streaming** - Combine `req->setNoStoreBody(true)` with `client.onBodyChunk(...)` to stream large payloads without heap spikes
 
 > ⚠ Limitations: provide trust material for HTTPS (CA, fingerprint or insecure flag) and remember the full body is buffered in memory unless you opt into zero-copy streaming via `setNoStoreBody(true)`.
@@ -150,10 +150,10 @@ void setDefaultConnectTimeout(uint32_t ms);
 // Follow HTTP redirects (max hops clamps to >=1). Disabled by default.
 void setFollowRedirects(bool enable, uint8_t maxHops = 3);
 
-// Abort if response headers exceed this many bytes (0 = unlimited)
+// Abort if response headers exceed this many bytes (default ~2.8 KiB, 0 = unlimited)
 void setMaxHeaderBytes(size_t maxBytes);
 
-// Soft limit for buffered response bodies (bytes, 0 = unlimited)
+// Soft limit for buffered response bodies (default 8192 bytes, 0 = unlimited)
 void setMaxBodySize(size_t maxBytes);
 
 // Limit simultaneous active requests (0 = unlimited, others queued)
@@ -162,11 +162,19 @@ void setMaxParallel(uint16_t maxParallel);
 // Set User-Agent string
 void setUserAgent(const char* userAgent);
 
+// Keep-alive connection pooling (idle timeout in ms, clamped to >= 1000)
+void setKeepAlive(bool enable, uint16_t idleMs = 5000);
+
 // Cookie jar helpers
 void clearCookies();
 void setCookie(const char* name, const char* value, const char* path = "/", const char* domain = nullptr,
                bool secure = false);
 ```
+
+Cookies are captured automatically from `Set-Cookie` responses and replayed on matching hosts/paths; call
+`clearCookies()` to wipe the jar or `setCookie()` to pre-seed entries manually. Keep-alive pooling is off by default;
+enable it with `setKeepAlive(true, idleMs)` to reuse TCP/TLS connections for the same host/port (respecting server
+`Connection: close` requests).
 
 #### Callback Types
 
@@ -212,7 +220,7 @@ client.get("http://example.com/chunked", [](AsyncHttpResponse* response) {
 
 ```cpp
 // Create custom request
-AsyncHttpRequest request(HTTP_POST, "http://example.com/api");
+AsyncHttpRequest request(HTTP_METHOD_POST, "http://example.com/api");
 
 // Set headers
 request.setHeader("Content-Type", "application/json");
@@ -228,6 +236,11 @@ request.setTimeout(10000);
 // Execute
 client.request(&request, onSuccess, onError);
 ```
+
+HTTP method enums are now prefixed (`HTTP_METHOD_GET`, `HTTP_METHOD_POST`, etc.) to avoid collisions with
+`ESPAsyncWebServer`'s `HTTP_GET`/`HTTP_POST` values. Legacy aliases can be re-enabled by defining
+`ASYNC_HTTP_ENABLE_LEGACY_METHOD_ALIASES` before including `ESPAsyncWebClient.h` (only do this if you are not also
+including `ESPAsyncWebServer.h` in the same translation unit).
 
 ## Examples
 
@@ -274,7 +287,7 @@ client.setHeader("X-API-Key", "your-api-key");
 client.setUserAgent("MyDevice/1.0");
 
 // Or set per-request headers
-AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_GET, "http://example.com");
+AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com");
 request->setHeader("Authorization", "Bearer token");
 client.request(request, onSuccess);
 ```
@@ -336,7 +349,7 @@ client.setHeader("Accept", "application/json");
 ### Per-Request Settings
 
 ```cpp
-AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_POST, url);
+AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_METHOD_POST, url);
 request->setTimeout(30000);  // 30 second timeout for this request
 request->setHeader("Content-Type", "application/xml");
 request->setBody(xmlData);
@@ -369,7 +382,7 @@ Parameters:
 Notes:
 
 - Invoked for every segment (chunk or contiguous data block)
-- The full body is still accumulated internally (future option may allow disabling accumulation)
+- Unless `req->setNoStoreBody(true)` is enabled, the full body is still accumulated internally
 - `final` is invoked just before the success callback
 - Keep it lightweight (avoid blocking operations)
 
@@ -378,7 +391,7 @@ Notes:
 
 If `Content-Length` is present, the response is considered complete once that many bytes have been received. Extra bytes (if a misbehaving server sends more) are ignored. Without `Content-Length`, completion is determined by connection close.
 
-Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` (default) to disable the guard.
+Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` to disable the guard (this applies only when buffering the response body in memory).
 
 Likewise, guard against oversized or malicious header blocks via `client.setMaxHeaderBytes(limit)`. When the cumulative response headers exceed `limit` bytes before completion of `\r\n\r\n`, the request aborts with `HEADERS_TOO_LARGE`.
 

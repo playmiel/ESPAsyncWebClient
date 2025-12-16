@@ -77,7 +77,7 @@ static void test_pools_connection_on_complete_body() {
     client.setKeepAlive(true, 3000);
 
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/");
+    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
     ctx->requestKeepAlive = true;
     ctx->resolvedTlsConfig = client.getDefaultTlsConfig();
     ctx->transport = new MockTransport(false);
@@ -103,7 +103,7 @@ static void test_does_not_pool_on_truncated_body() {
     client.setKeepAlive(true, 3000);
 
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/");
+    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
     ctx->requestKeepAlive = true;
     ctx->resolvedTlsConfig = client.getDefaultTlsConfig();
     ctx->transport = new MockTransport(false);
@@ -131,7 +131,7 @@ static void test_reuses_pooled_connection() {
 
     // Seed pool with one connection
     auto poolCtx = new AsyncHttpClient::RequestContext();
-    poolCtx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/");
+    poolCtx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
     poolCtx->requestKeepAlive = true;
     poolCtx->resolvedTlsConfig = client.getDefaultTlsConfig();
     poolCtx->transport = new MockTransport(false);
@@ -145,7 +145,7 @@ static void test_reuses_pooled_connection() {
     MockTransport* pooled = static_cast<MockTransport*>(client._idleConnections[0].transport);
 
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_GET, "http://example.com/");
+    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
     ctx->request->setHeader("Connection", "keep-alive");
     ctx->response = new AsyncHttpResponse();
     ctx->onSuccess = [](AsyncHttpResponse* resp) { TEST_ASSERT_EQUAL(200, resp->getStatusCode()); };
