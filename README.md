@@ -597,6 +597,7 @@ Notes:
 - `enableGzipAcceptEncoding(false)` removes `Accept-Encoding` from the request's header list (or call `request.removeHeader("Accept-Encoding")`).
 - `Content-Length` (when present) refers to the *compressed* payload size; completion detection still follows the wire length.
 - RAM impact: enabling gzip decode allocates an internal 32KB sliding window per active gzip-decoded response (plus small state).
+- Integrity: the gzip trailer is verified (CRC32 + ISIZE); corrupted payloads raise `GZIP_DECODE_FAILED`.
 
 ### HTTPS quick reference
 

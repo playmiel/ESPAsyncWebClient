@@ -71,6 +71,9 @@ class GzipDecoder {
     uint8_t _trailer[8];
     size_t _trailerLen;
 
+    uint32_t _crc32;
+    uint32_t _outSize;
+
     // Deflate (tinfl) state
     void* _dict;
     size_t _dictOfs;

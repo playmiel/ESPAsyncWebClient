@@ -108,6 +108,57 @@ static void test_truncated_gzip_fails() {
     TEST_ASSERT_TRUE(strlen(dec.lastError()) > 0);
 }
 
+static void test_gzip_crc_mismatch_fails() {
+    std::vector<uint8_t> gz(kGzipHello, kGzipHello + sizeof(kGzipHello));
+    // Flip one CRC byte in trailer (bytes 4 from end..)
+    gz[gz.size() - 8] ^= 0x01;
+
+    GzipDecoder dec;
+    TEST_ASSERT_TRUE(dec.begin());
+
+    size_t offset = 0;
+    std::string out;
+    while (offset < gz.size()) {
+        const uint8_t* outPtr = nullptr;
+        size_t outLen = 0;
+        size_t consumed = 0;
+        GzipDecoder::Result r = dec.write(gz.data() + offset, gz.size() - offset, &consumed, &outPtr, &outLen, true);
+        if (outLen > 0)
+            out.append(reinterpret_cast<const char*>(outPtr), outLen);
+        if (r == GzipDecoder::Result::kError)
+            break;
+        TEST_ASSERT_TRUE(consumed > 0 || outLen > 0);
+        offset += consumed;
+    }
+
+    TEST_ASSERT_FALSE_MESSAGE(dec.isDone(), "should not be done on CRC mismatch");
+    TEST_ASSERT_TRUE(strlen(dec.lastError()) > 0);
+}
+
+static void test_gzip_isize_mismatch_fails() {
+    std::vector<uint8_t> gz(kGzipHello, kGzipHello + sizeof(kGzipHello));
+    // Flip one ISIZE byte in trailer (last 4 bytes).
+    gz[gz.size() - 1] ^= 0x01;
+
+    GzipDecoder dec;
+    TEST_ASSERT_TRUE(dec.begin());
+
+    size_t offset = 0;
+    while (offset < gz.size()) {
+        const uint8_t* outPtr = nullptr;
+        size_t outLen = 0;
+        size_t consumed = 0;
+        GzipDecoder::Result r = dec.write(gz.data() + offset, gz.size() - offset, &consumed, &outPtr, &outLen, true);
+        if (r == GzipDecoder::Result::kError)
+            break;
+        TEST_ASSERT_TRUE(consumed > 0 || outLen > 0);
+        offset += consumed;
+    }
+
+    TEST_ASSERT_FALSE(dec.isDone());
+    TEST_ASSERT_TRUE(strlen(dec.lastError()) > 0);
+}
+
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -117,5 +168,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_gzip_decode_byte_by_byte);
     RUN_TEST(test_gzip_header_with_fname);
     RUN_TEST(test_truncated_gzip_fails);
+    RUN_TEST(test_gzip_crc_mismatch_fails);
+    RUN_TEST(test_gzip_isize_mismatch_fails);
     return UNITY_END();
 }

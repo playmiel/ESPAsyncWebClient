@@ -7,7 +7,7 @@
 GzipDecoder::GzipDecoder()
     : _state(State::kError), _headerStage(HeaderStage::kFixed10), _error("Gzip decode disabled"), _fixedLen(0),
       _flags(0), _extraLenRead(0), _extraRemaining(0), _needName(false), _needComment(false), _needHcrc(false),
-      _trailerLen(0), _dict(nullptr), _dictOfs(0), _decomp(nullptr) {
+      _trailerLen(0), _crc32(0), _outSize(0), _dict(nullptr), _dictOfs(0), _decomp(nullptr) {
     memset(_fixed, 0, sizeof(_fixed));
     memset(_extraLenBytes, 0, sizeof(_extraLenBytes));
     memset(_trailer, 0, sizeof(_trailer));
@@ -73,10 +73,42 @@ static constexpr uint8_t kGzipFlagExtra = 0x04;
 static constexpr uint8_t kGzipFlagName = 0x08;
 static constexpr uint8_t kGzipFlagComment = 0x10;
 
+static uint32_t readLe32(const uint8_t* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint32_t* crc32Table() {
+    static bool inited = false;
+    static uint32_t table[256];
+    if (inited)
+        return table;
+    for (uint32_t i = 0; i < 256; ++i) {
+        uint32_t c = i;
+        for (uint32_t k = 0; k < 8; ++k) {
+            if (c & 1U)
+                c = 0xEDB88320U ^ (c >> 1);
+            else
+                c >>= 1;
+        }
+        table[i] = c;
+    }
+    inited = true;
+    return table;
+}
+
+static uint32_t crc32Update(uint32_t crc, const uint8_t* data, size_t len) {
+    uint32_t c = crc;
+    uint32_t* t = crc32Table();
+    for (size_t i = 0; i < len; ++i) {
+        c = t[(c ^ data[i]) & 0xFFU] ^ (c >> 8);
+    }
+    return c;
+}
+
 GzipDecoder::GzipDecoder()
     : _state(State::kHeader), _headerStage(HeaderStage::kFixed10), _error(nullptr), _fixedLen(0), _flags(0),
       _extraLenRead(0), _extraRemaining(0), _needName(false), _needComment(false), _needHcrc(false), _trailerLen(0),
-      _dict(nullptr), _dictOfs(0), _decomp(nullptr) {
+      _crc32(0), _outSize(0), _dict(nullptr), _dictOfs(0), _decomp(nullptr) {
     memset(_fixed, 0, sizeof(_fixed));
     memset(_extraLenBytes, 0, sizeof(_extraLenBytes));
     memset(_trailer, 0, sizeof(_trailer));
@@ -110,6 +142,8 @@ void GzipDecoder::reset() {
 
     _trailerLen = 0;
     _dictOfs = 0;
+    _crc32 = 0xFFFFFFFFU;
+    _outSize = 0;
 }
 
 bool GzipDecoder::begin() {
@@ -288,6 +322,20 @@ GzipDecoder::Result GzipDecoder::consumeTrailer(const uint8_t* in, size_t inLen,
         }
         if (_trailerLen < kGzipTrailerSize)
             return Result::kNeedMoreInput;
+        uint32_t expectedCrc = readLe32(_trailer);
+        uint32_t expectedISize = readLe32(_trailer + 4);
+        uint32_t gotCrc = _crc32 ^ 0xFFFFFFFFU;
+        uint32_t gotISize = _outSize;
+
+        if (expectedCrc != gotCrc) {
+            setError("Gzip CRC32 mismatch");
+            return Result::kError;
+        }
+        if (expectedISize != gotISize) {
+            setError("Gzip ISIZE mismatch");
+            return Result::kError;
+        }
+
         _state = State::kDone;
         return Result::kDone;
     }
@@ -354,8 +402,11 @@ GzipDecoder::Result GzipDecoder::write(const uint8_t* in, size_t inLen, size_t* 
     totalConsumed += srcBufSize;
     *inConsumed = totalConsumed;
     if (dstBufSize > 0) {
-        *outPtr = reinterpret_cast<const uint8_t*>(dict + _dictOfs);
+        const uint8_t* produced = reinterpret_cast<const uint8_t*>(dict + _dictOfs);
+        *outPtr = produced;
         *outLen = dstBufSize;
+        _crc32 = crc32Update(_crc32, produced, dstBufSize);
+        _outSize += (uint32_t)dstBufSize;
         _dictOfs = (_dictOfs + dstBufSize) & (kTinflDictSize - 1);
     }
 
