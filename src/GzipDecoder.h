@@ -78,4 +78,3 @@ class GzipDecoder {
 };
 
 #endif // GZIP_DECODER_H
-

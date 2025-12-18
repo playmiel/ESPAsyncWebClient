@@ -696,7 +696,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                 size_t outLen = 0;
                 size_t consumed = 0;
                 GzipDecoder::Result r = context->gzipDecoder.write(reinterpret_cast<const uint8_t*>(wire + offset),
-                                                                  wireLen - offset, &consumed, &outPtr, &outLen, true);
+                                                                   wireLen - offset, &consumed, &outPtr, &outLen, true);
                 if (outLen > 0) {
                     if (!emitBodyBytes(reinterpret_cast<const char*>(outPtr), outLen))
                         return false;

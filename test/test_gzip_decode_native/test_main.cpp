@@ -26,8 +26,7 @@ static std::string decodeGzipInChunks(const std::vector<uint8_t>& gz, size_t chu
             const uint8_t* outPtr = nullptr;
             size_t outLen = 0;
             size_t consumed = 0;
-            GzipDecoder::Result r =
-                dec.write(gz.data() + offset + inner, n - inner, &consumed, &outPtr, &outLen, true);
+            GzipDecoder::Result r = dec.write(gz.data() + offset + inner, n - inner, &consumed, &outPtr, &outLen, true);
             if (outLen > 0) {
                 out.append(reinterpret_cast<const char*>(outPtr), outLen);
             }

@@ -24,6 +24,12 @@
  *
  **************************************************************************/
 
+#ifndef ASYNC_HTTP_ENABLE_GZIP_DECODE
+#define ASYNC_HTTP_ENABLE_GZIP_DECODE 0
+#endif
+
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+
 #include "miniz.h"
 
 #ifndef MINIZ_NO_INFLATE_APIS
@@ -768,3 +774,5 @@ extern "C"
 #endif
 
 #endif /*#ifndef MINIZ_NO_INFLATE_APIS*/
+
+#endif // ASYNC_HTTP_ENABLE_GZIP_DECODE

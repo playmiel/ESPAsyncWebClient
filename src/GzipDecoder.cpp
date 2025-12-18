@@ -1,5 +1,60 @@
 #include "GzipDecoder.h"
 
+#if !ASYNC_HTTP_ENABLE_GZIP_DECODE
+
+#include <string.h>
+
+GzipDecoder::GzipDecoder()
+    : _state(State::kError), _headerStage(HeaderStage::kFixed10), _error("Gzip decode disabled"), _fixedLen(0),
+      _flags(0), _extraLenRead(0), _extraRemaining(0), _needName(false), _needComment(false), _needHcrc(false),
+      _trailerLen(0), _dict(nullptr), _dictOfs(0), _decomp(nullptr) {
+    memset(_fixed, 0, sizeof(_fixed));
+    memset(_extraLenBytes, 0, sizeof(_extraLenBytes));
+    memset(_trailer, 0, sizeof(_trailer));
+}
+
+GzipDecoder::~GzipDecoder() {}
+
+void GzipDecoder::reset() {}
+
+bool GzipDecoder::begin() {
+    return false;
+}
+
+GzipDecoder::Result GzipDecoder::write(const uint8_t* in, size_t inLen, size_t* inConsumed, const uint8_t** outPtr,
+                                       size_t* outLen, bool hasMoreInput) {
+    (void)in;
+    (void)inLen;
+    (void)hasMoreInput;
+    if (inConsumed)
+        *inConsumed = 0;
+    if (outPtr)
+        *outPtr = nullptr;
+    if (outLen)
+        *outLen = 0;
+    _error = "Gzip decode disabled (build with -DASYNC_HTTP_ENABLE_GZIP_DECODE=1)";
+    return Result::kError;
+}
+
+GzipDecoder::Result GzipDecoder::finish(const uint8_t** outPtr, size_t* outLen) {
+    if (outPtr)
+        *outPtr = nullptr;
+    if (outLen)
+        *outLen = 0;
+    _error = "Gzip decode disabled (build with -DASYNC_HTTP_ENABLE_GZIP_DECODE=1)";
+    return Result::kError;
+}
+
+bool GzipDecoder::isDone() const {
+    return false;
+}
+
+const char* GzipDecoder::lastError() const {
+    return _error ? _error : "";
+}
+
+#else
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -18,9 +73,10 @@ static constexpr uint8_t kGzipFlagExtra = 0x04;
 static constexpr uint8_t kGzipFlagName = 0x08;
 static constexpr uint8_t kGzipFlagComment = 0x10;
 
-GzipDecoder::GzipDecoder() : _state(State::kHeader), _headerStage(HeaderStage::kFixed10), _error(nullptr), _fixedLen(0),
-                             _flags(0), _extraLenRead(0), _extraRemaining(0), _needName(false), _needComment(false),
-                             _needHcrc(false), _trailerLen(0), _dict(nullptr), _dictOfs(0), _decomp(nullptr) {
+GzipDecoder::GzipDecoder()
+    : _state(State::kHeader), _headerStage(HeaderStage::kFixed10), _error(nullptr), _fixedLen(0), _flags(0),
+      _extraLenRead(0), _extraRemaining(0), _needName(false), _needComment(false), _needHcrc(false), _trailerLen(0),
+      _dict(nullptr), _dictOfs(0), _decomp(nullptr) {
     memset(_fixed, 0, sizeof(_fixed));
     memset(_extraLenBytes, 0, sizeof(_extraLenBytes));
     memset(_trailer, 0, sizeof(_trailer));
@@ -352,3 +408,5 @@ GzipDecoder::Result GzipDecoder::finish(const uint8_t** outPtr, size_t* outLen) 
 
     return r;
 }
+
+#endif // ASYNC_HTTP_ENABLE_GZIP_DECODE

@@ -179,10 +179,9 @@ class AsyncHttpClient {
         RequestContext()
             : request(nullptr), response(nullptr), transport(nullptr), headersComplete(false), responseProcessed(false),
               expectedContentLength(0), receivedContentLength(0), receivedBodyLength(0), chunked(false),
-              chunkedComplete(false),
-              currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), trailerLineCount(0),
-              redirectCount(0), notifiedEndCallback(false), connectStartMs(0), connectTimeoutMs(0), headersSent(false),
-              streamingBodyInProgress(false), requestKeepAlive(false), serverRequestedClose(false),
+              chunkedComplete(false), currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0),
+              trailerLineCount(0), redirectCount(0), notifiedEndCallback(false), connectStartMs(0), connectTimeoutMs(0),
+              headersSent(false), streamingBodyInProgress(false), requestKeepAlive(false), serverRequestedClose(false),
               usingPooledConnection(false)
 #if ASYNC_HTTP_ENABLE_GZIP_DECODE
               ,
