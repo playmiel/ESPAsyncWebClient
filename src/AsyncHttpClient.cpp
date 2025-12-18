@@ -18,27 +18,15 @@ static constexpr size_t kDefaultMaxHeaderBytes = 2800; // ~2.8 KiB
 static constexpr size_t kDefaultMaxBodyBytes = 8192;   // 8 KiB
 static constexpr size_t kMaxCookieCount = 16;
 static constexpr size_t kMaxCookieBytes = 4096;
-static const char* kPublicSuffixes[] = {"com",
-                                        "net",
-                                        "org",
-                                        "gov",
-                                        "edu",
-                                        "mil",
-                                        "int",
-                                        "co.uk",
-                                        "ac.uk",
-                                        "gov.uk",
-                                        "uk",
-                                        "io",
-                                        "co",
-                                        "app",
-                                        "dev",
-                                        "github.io",
-                                        "web.app",
-                                        "pages.dev",
-                                        "vercel.app",
-                                        "firebaseapp.com",
-                                        "cloudfront.net"};
+
+static String normalizeDomainForStorage(const String& domain) {
+    String cleaned = domain;
+    cleaned.trim();
+    if (cleaned.startsWith("."))
+        cleaned.remove(0, 1);
+    cleaned.toLowerCase();
+    return cleaned;
+}
 
 static bool equalsIgnoreCase(const String& a, const char* b) {
     size_t lenA = a.length();
@@ -180,17 +168,17 @@ AsyncHttpClient::~AsyncHttpClient() {
 }
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
-void AsyncHttpClient::lock() {
+void AsyncHttpClient::lock() const {
     if (_reqMutex)
         xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
 }
-void AsyncHttpClient::unlock() {
+void AsyncHttpClient::unlock() const {
     if (_reqMutex)
         xSemaphoreGiveRecursive(_reqMutex);
 }
 #else
-void AsyncHttpClient::lock() {}
-void AsyncHttpClient::unlock() {}
+void AsyncHttpClient::lock() const {}
+void AsyncHttpClient::unlock() const {}
 #endif
 
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
@@ -225,7 +213,12 @@ uint32_t AsyncHttpClient::patch(const char* url, const char* data, SuccessCallba
 }
 
 void AsyncHttpClient::setHeader(const char* name, const char* value) {
-    String nameStr(name), valueStr(value);
+    if (!name)
+        return;
+    String nameStr(name);
+    String valueStr(value ? value : "");
+    if (!isValidHttpHeaderName(nameStr) || !isValidHttpHeaderValue(valueStr))
+        return;
     lock();
     for (auto& h : _defaultHeaders) {
         if (h.name.equalsIgnoreCase(nameStr)) {
@@ -264,7 +257,7 @@ void AsyncHttpClient::setTimeout(uint32_t timeout) {
 }
 void AsyncHttpClient::setUserAgent(const char* userAgent) {
     lock();
-    _defaultUserAgent = String(userAgent);
+    _defaultUserAgent = userAgent ? String(userAgent) : String();
     unlock();
 }
 
@@ -274,6 +267,37 @@ void AsyncHttpClient::setFollowRedirects(bool enable, uint8_t maxHops) {
     if (maxHops == 0)
         maxHops = 1;
     _maxRedirectHops = maxHops;
+    unlock();
+}
+
+void AsyncHttpClient::setRedirectHeaderPolicy(RedirectHeaderPolicy policy) {
+    lock();
+    _redirectHeaderPolicy = policy;
+    unlock();
+}
+
+void AsyncHttpClient::addRedirectSafeHeader(const char* name) {
+    if (!name || strlen(name) == 0)
+        return;
+    String headerName(name);
+    headerName.trim();
+    if (headerName.length() == 0)
+        return;
+    headerName.toLowerCase();
+    lock();
+    for (const auto& existing : _redirectSafeHeaders) {
+        if (existing.equalsIgnoreCase(headerName)) {
+            unlock();
+            return;
+        }
+    }
+    _redirectSafeHeaders.push_back(headerName);
+    unlock();
+}
+
+void AsyncHttpClient::clearRedirectSafeHeaders() {
+    lock();
+    _redirectSafeHeaders.clear();
     unlock();
 }
 
@@ -358,9 +382,46 @@ void AsyncHttpClient::clearCookies() {
     unlock();
 }
 
+void AsyncHttpClient::setAllowCookieDomainAttribute(bool enable) {
+    lock();
+    _allowCookieDomainAttribute = enable;
+    unlock();
+}
+
+void AsyncHttpClient::addAllowedCookieDomain(const char* domain) {
+    if (!domain || strlen(domain) == 0)
+        return;
+    String normalized = normalizeDomainForStorage(String(domain));
+    if (normalized.length() == 0)
+        return;
+    if (normalized.indexOf('.') == -1)
+        return;
+    lock();
+    for (const auto& existing : _allowedCookieDomains) {
+        if (existing.equalsIgnoreCase(normalized)) {
+            unlock();
+            return;
+        }
+    }
+    _allowedCookieDomains.push_back(normalized);
+    unlock();
+}
+
+void AsyncHttpClient::clearAllowedCookieDomains() {
+    lock();
+    _allowedCookieDomains.clear();
+    unlock();
+}
+
 void AsyncHttpClient::setCookie(const char* name, const char* value, const char* path, const char* domain,
                                 bool secure) {
     if (!name || strlen(name) == 0)
+        return;
+    if (!isValidHttpHeaderValue(String(name)))
+        return;
+    if (strchr(name, '=') || strchr(name, ';'))
+        return;
+    if (value && !isValidHttpHeaderValue(String(value)))
         return;
     int64_t now = currentTimeSeconds();
     StoredCookie cookie;
@@ -368,6 +429,7 @@ void AsyncHttpClient::setCookie(const char* name, const char* value, const char*
     cookie.value = value ? String(value) : String();
     cookie.path = (path && strlen(path) > 0) ? String(path) : String("/");
     cookie.domain = domain ? String(domain) : String();
+    cookie.hostOnly = false; // Manual cookies are treated as domain cookies (domain=="" means "any host").
     cookie.secure = secure;
     cookie.createdAt = now;
     cookie.lastAccessAt = now;
@@ -396,6 +458,11 @@ void AsyncHttpClient::setCookie(const char* name, const char* value, const char*
 
 uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
                                       ErrorCallback onError) {
+    if (!url || strlen(url) == 0) {
+        if (onError)
+            onError(CONNECTION_FAILED, "URL is empty");
+        return 0;
+    }
     // Snapshot global defaults under lock to avoid concurrent modification issues
     std::vector<HttpHeader> headersCopy;
     String uaCopy;
@@ -425,6 +492,17 @@ uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const 
 }
 
 uint32_t AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError) {
+    if (!request) {
+        if (onError)
+            onError(CONNECTION_FAILED, "Request is null");
+        return 0;
+    }
+    if (request->getHost().length() == 0 || request->getPath().length() == 0) {
+        if (onError)
+            onError(CONNECTION_FAILED, "Invalid URL");
+        delete request;
+        return 0;
+    }
     RequestContext* ctx = new RequestContext();
     ctx->request = request;
     ctx->response = new AsyncHttpResponse();
@@ -573,18 +651,97 @@ void AsyncHttpClient::handleConnect(RequestContext* context) {
 }
 
 void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len) {
-    bool storeBody = context && context->request && !context->request->getNoStoreBody();
-    bool bufferThisChunk = context && (!context->headersComplete || context->chunked);
+    if (!context)
+        return;
+    bool storeBody = context->request && !context->request->getNoStoreBody();
+    bool bufferThisChunk = (!context->headersComplete || context->chunked);
     if (bufferThisChunk)
         context->responseBuffer.concat(data, len);
     bool enforceLimit = shouldEnforceBodyLimit(context);
-    auto wouldExceedLimit = [&](size_t incoming) -> bool {
+    auto wouldExceedBodyLimit = [&](size_t incoming) -> bool {
         if (!enforceLimit)
             return false;
-        size_t current = context->receivedContentLength;
+        size_t current = context->receivedBodyLength;
         if (current >= _maxBodySize)
             return true;
         return incoming > (_maxBodySize - current);
+    };
+
+    auto emitBodyBytes = [&](const char* out, size_t outLen) -> bool {
+        if (!out || outLen == 0)
+            return true;
+        if (wouldExceedBodyLimit(outLen)) {
+            triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+            return false;
+        }
+        if (storeBody) {
+            context->response->appendBody(out, outLen);
+        }
+        context->receivedBodyLength += outLen;
+        auto cb = _bodyChunkCallback;
+        if (cb)
+            cb(out, outLen, false);
+        return true;
+    };
+
+    auto deliverWireBytes = [&](const char* wire, size_t wireLen) -> bool {
+        if (wireLen == 0)
+            return true;
+        context->receivedContentLength += wireLen;
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+        if (context->gzipDecodeActive) {
+            size_t offset = 0;
+            while (offset < wireLen) {
+                const uint8_t* outPtr = nullptr;
+                size_t outLen = 0;
+                size_t consumed = 0;
+                GzipDecoder::Result r = context->gzipDecoder.write(reinterpret_cast<const uint8_t*>(wire + offset),
+                                                                   wireLen - offset, &consumed, &outPtr, &outLen, true);
+                if (outLen > 0) {
+                    if (!emitBodyBytes(reinterpret_cast<const char*>(outPtr), outLen))
+                        return false;
+                }
+                if (r == GzipDecoder::Result::kError) {
+                    triggerError(context, GZIP_DECODE_FAILED, context->gzipDecoder.lastError());
+                    return false;
+                }
+                offset += consumed;
+                if (consumed == 0 && outLen == 0) {
+                    triggerError(context, GZIP_DECODE_FAILED, "Gzip decoder stalled");
+                    return false;
+                }
+                if (r == GzipDecoder::Result::kNeedMoreInput && offset >= wireLen) {
+                    break;
+                }
+            }
+            return true;
+        }
+#endif
+        return emitBodyBytes(wire, wireLen);
+    };
+
+    auto finalizeDecoding = [&]() -> bool {
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+        if (!context->gzipDecodeActive)
+            return true;
+        for (;;) {
+            const uint8_t* outPtr = nullptr;
+            size_t outLen = 0;
+            GzipDecoder::Result r = context->gzipDecoder.finish(&outPtr, &outLen);
+            if (outLen > 0) {
+                if (!emitBodyBytes(reinterpret_cast<const char*>(outPtr), outLen))
+                    return false;
+            }
+            if (r == GzipDecoder::Result::kDone)
+                return true;
+            if (r == GzipDecoder::Result::kOk)
+                continue;
+            triggerError(context, GZIP_DECODE_FAILED, context->gzipDecoder.lastError());
+            return false;
+        }
+#else
+        return true;
+#endif
     };
 
     if (!context->headersComplete) {
@@ -601,27 +758,31 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             String headerData = context->responseBuffer.substring(0, headerEnd);
             if (parseResponseHeaders(context, headerData)) {
                 context->headersComplete = true;
-                if (enforceLimit && context->expectedContentLength > 0 &&
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+                bool gzipActive = context->gzipDecodeActive;
+#else
+                bool gzipActive = false;
+#endif
+                if (enforceLimit && !gzipActive && context->expectedContentLength > 0 &&
                     context->expectedContentLength > _maxBodySize) {
                     triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                     return;
+                }
+                if (storeBody && !gzipActive && context->expectedContentLength > 0 && !context->chunked &&
+                    (!enforceLimit || context->expectedContentLength <= _maxBodySize)) {
+                    context->response->reserveBody(context->expectedContentLength);
                 }
                 context->responseBuffer.remove(0, headerEnd + 4);
                 if (handleRedirect(context))
                     return;
                 if (!context->chunked && context->responseBuffer.length() > 0) {
                     size_t incomingLen = context->responseBuffer.length();
-                    if (wouldExceedLimit(incomingLen)) {
+                    if (!gzipActive && wouldExceedBodyLimit(incomingLen)) {
                         triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                         return;
                     }
-                    if (storeBody) {
-                        context->response->appendBody(context->responseBuffer.c_str(), incomingLen);
-                    }
-                    context->receivedContentLength += incomingLen;
-                    auto cb = _bodyChunkCallback;
-                    if (cb)
-                        cb(context->responseBuffer.c_str(), incomingLen, false);
+                    if (!deliverWireBytes(context->responseBuffer.c_str(), incomingLen))
+                        return;
                     context->responseBuffer = "";
                 }
             } else {
@@ -630,17 +791,17 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             }
         }
     } else if (!context->chunked) {
-        if (wouldExceedLimit(len)) {
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+        bool gzipActive = context->gzipDecodeActive;
+#else
+        bool gzipActive = false;
+#endif
+        if (!gzipActive && wouldExceedBodyLimit(len)) {
             triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
             return;
         }
-        if (storeBody) {
-            context->response->appendBody(data, len);
-        }
-        context->receivedContentLength += len;
-        auto cb2 = _bodyChunkCallback;
-        if (cb2)
-            cb2(data, len, false);
+        if (!deliverWireBytes(data, len))
+            return;
     }
 
     while (context->headersComplete && context->chunked && !context->chunkedComplete) {
@@ -714,7 +875,12 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                 triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size parse error");
                 return;
             }
-            if (chunkSize > 0 && wouldExceedLimit(chunkSize)) {
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+            bool gzipActive = context->gzipDecodeActive;
+#else
+            bool gzipActive = false;
+#endif
+            if (!gzipActive && chunkSize > 0 && wouldExceedBodyLimit(chunkSize)) {
                 triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                 return;
             }
@@ -735,18 +901,9 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             return;
         }
         size_t chunkLen = context->currentChunkRemaining;
-        if (wouldExceedLimit(chunkLen)) {
-            triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
-            return;
-        }
         const char* chunkPtr = context->responseBuffer.c_str();
-        if (storeBody) {
-            context->response->appendBody(chunkPtr, chunkLen);
-        }
-        context->receivedContentLength += chunkLen;
-        auto cb3 = _bodyChunkCallback;
-        if (cb3)
-            cb3(chunkPtr, chunkLen, false);
+        if (!deliverWireBytes(chunkPtr, chunkLen))
+            return;
         context->responseBuffer.remove(0, needed);
         context->currentChunkRemaining = 0;
     }
@@ -759,6 +916,8 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                  context->receivedContentLength >= context->expectedContentLength)
             complete = true;
         if (complete) {
+            if (!finalizeDecoding())
+                return;
             processResponse(context);
         }
     }
@@ -811,6 +970,51 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context) {
         triggerError(context, CONNECTION_CLOSED_MID_BODY, "Truncated response");
         return;
     }
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+    if (context->gzipDecodeActive) {
+        bool storeBody = context->request && !context->request->getNoStoreBody();
+        bool enforceLimit = shouldEnforceBodyLimit(context);
+        auto wouldExceedBodyLimit = [&](size_t incoming) -> bool {
+            if (!enforceLimit)
+                return false;
+            size_t current = context->receivedBodyLength;
+            if (current >= _maxBodySize)
+                return true;
+            return incoming > (_maxBodySize - current);
+        };
+        auto emitBodyBytes = [&](const char* out, size_t outLen) -> bool {
+            if (!out || outLen == 0)
+                return true;
+            if (wouldExceedBodyLimit(outLen)) {
+                triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+                return false;
+            }
+            if (storeBody) {
+                context->response->appendBody(out, outLen);
+            }
+            context->receivedBodyLength += outLen;
+            auto cb = _bodyChunkCallback;
+            if (cb)
+                cb(out, outLen, false);
+            return true;
+        };
+        for (;;) {
+            const uint8_t* outPtr = nullptr;
+            size_t outLen = 0;
+            GzipDecoder::Result r = context->gzipDecoder.finish(&outPtr, &outLen);
+            if (outLen > 0) {
+                if (!emitBodyBytes(reinterpret_cast<const char*>(outPtr), outLen))
+                    return;
+            }
+            if (r == GzipDecoder::Result::kDone)
+                break;
+            if (r == GzipDecoder::Result::kOk)
+                continue;
+            triggerError(context, GZIP_DECODE_FAILED, context->gzipDecoder.lastError());
+            return;
+        }
+    }
+#endif
     // Otherwise success: either Content-Length reached, or no Content-Length and closure marks the end
     processResponse(context);
 }
@@ -846,6 +1050,7 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
         if (colonPos != -1) {
             String name = line.substring(0, colonPos);
             String value = line.substring(colonPos + 1);
+            name.trim();
             value.trim();
             context->response->setHeader(name, value);
             if (name.equalsIgnoreCase("Content-Length")) {
@@ -854,11 +1059,18 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
                     parsed = 0;
                 context->expectedContentLength = (size_t)parsed;
                 context->response->setContentLength(context->expectedContentLength);
-                bool storeBody = !context->request->getNoStoreBody();
-                if (storeBody)
-                    context->response->reserveBody(context->expectedContentLength);
             } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
                 context->chunked = true;
+            } else if (name.equalsIgnoreCase("Content-Encoding")) {
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+                String lower = value;
+                lower.toLowerCase();
+                if (lower.indexOf("gzip") != -1) {
+                    context->gzipEncoded = true;
+                    context->gzipDecodeActive = true;
+                    context->gzipDecoder.begin();
+                }
+#endif
             } else if (name.equalsIgnoreCase("Connection")) {
                 String lower = value;
                 lower.toLowerCase();
@@ -1032,6 +1244,13 @@ bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpReq
     newRequest->setNoStoreBody(context->request->getNoStoreBody());
 
     bool sameOrigin = isSameOrigin(context->request, newRequest);
+    RedirectHeaderPolicy headerPolicy;
+    std::vector<String> redirectSafeHeaders;
+    lock();
+    headerPolicy = _redirectHeaderPolicy;
+    redirectSafeHeaders = _redirectSafeHeaders;
+    unlock();
+
     auto isCrossOriginSensitiveHeader = [](const String& name) {
         String lower = name;
         lower.toLowerCase();
@@ -1039,14 +1258,49 @@ bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpReq
                lower.equals("cookie2") || lower.startsWith("x-api-key") || lower.startsWith("x-auth-token") ||
                lower.startsWith("x-access-token");
     };
+    auto isDefaultCrossOriginSafeHeader = [dropBody](const String& name) {
+        if (equalsIgnoreCase(name, "User-Agent"))
+            return true;
+        if (equalsIgnoreCase(name, "Accept"))
+            return true;
+        if (equalsIgnoreCase(name, "Accept-Encoding"))
+            return true;
+        if (equalsIgnoreCase(name, "Accept-Language"))
+            return true;
+        if (!dropBody && equalsIgnoreCase(name, "Content-Type"))
+            return true;
+        return false;
+    };
+    auto isAllowlistedForCrossOrigin = [&redirectSafeHeaders](const String& name) {
+        String lower = name;
+        lower.toLowerCase();
+        for (const auto& allowed : redirectSafeHeaders) {
+            if (allowed.equalsIgnoreCase(lower))
+                return true;
+        }
+        return false;
+    };
     const auto& headers = context->request->getHeaders();
     for (const auto& hdr : headers) {
         if (hdr.name.equalsIgnoreCase("Content-Length"))
             continue;
+        // Always rebuild cookies for the redirected request from the cookie jar (avoids duplicates and leaks).
+        if (hdr.name.equalsIgnoreCase("Cookie") || hdr.name.equalsIgnoreCase("Cookie2"))
+            continue;
+        // Prevent callers from pinning an old Host header across redirects.
+        if (hdr.name.equalsIgnoreCase("Host"))
+            continue;
         if (dropBody && hdr.name.equalsIgnoreCase("Content-Type"))
             continue;
-        if (!sameOrigin && isCrossOriginSensitiveHeader(hdr.name))
-            continue;
+        if (!sameOrigin) {
+            if (headerPolicy == RedirectHeaderPolicy::kLegacyDropSensitiveOnly) {
+                if (isCrossOriginSensitiveHeader(hdr.name))
+                    continue;
+            } else if (headerPolicy == RedirectHeaderPolicy::kDropAllCrossOrigin) {
+                if (!isDefaultCrossOriginSafeHeader(hdr.name) && !isAllowlistedForCrossOrigin(hdr.name))
+                    continue;
+            }
+        }
         newRequest->setHeader(hdr.name, hdr.value);
     }
 
@@ -1090,6 +1344,7 @@ void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttp
     context->responseProcessed = false;
     context->expectedContentLength = 0;
     context->receivedContentLength = 0;
+    context->receivedBodyLength = 0;
     context->chunked = false;
     context->chunkedComplete = false;
     context->currentChunkRemaining = 0;
@@ -1102,6 +1357,11 @@ void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttp
     context->serverRequestedClose = false;
     context->usingPooledConnection = false;
     context->resolvedTlsConfig = AsyncHttpTLSConfig();
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+    context->gzipEncoded = false;
+    context->gzipDecodeActive = false;
+    context->gzipDecoder.reset();
+#endif
 #if !ASYNC_TCP_HAS_TIMEOUT
     context->timeoutTimer = millis();
 #endif
@@ -1198,6 +1458,10 @@ void AsyncHttpClient::sendStreamData(RequestContext* context) {
         triggerError(context, BODY_STREAM_READ_FAILED, "Body stream read failed");
         return;
     }
+    if (written > (int)sizeof(temp)) {
+        triggerError(context, BODY_STREAM_READ_FAILED, "Body stream provider overrun");
+        return;
+    }
     if (written > 0)
         context->transport->write((const char*)temp, written);
     if (final)
@@ -1215,12 +1479,32 @@ bool AsyncHttpClient::shouldEnforceBodyLimit(RequestContext* context) {
 }
 
 AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* request) const {
-    AsyncHttpTLSConfig cfg = _defaultTlsConfig;
-    if (!request || !request->hasTlsConfig())
+    AsyncHttpTLSConfig cfg;
+    lock();
+    cfg = _defaultTlsConfig;
+    unlock();
+
+    auto sanitize = [](AsyncHttpTLSConfig* c) {
+        if (!c)
+            return;
+        if (c->handshakeTimeoutMs == 0)
+            c->handshakeTimeoutMs = 12000;
+#if !ASYNC_HTTP_ALLOW_INSECURE_TLS
+        // Allow skipping CA validation only when pinning is configured.
+        if (c->insecure && c->fingerprint.length() == 0)
+            c->insecure = false;
+#endif
+    };
+
+    if (!request || !request->hasTlsConfig()) {
+        sanitize(&cfg);
         return cfg;
+    }
     const AsyncHttpTLSConfig* overrideCfg = request->getTlsConfig();
-    if (!overrideCfg)
+    if (!overrideCfg) {
+        sanitize(&cfg);
         return cfg;
+    }
     if (overrideCfg->caCert.length() > 0)
         cfg.caCert = overrideCfg->caCert;
     if (overrideCfg->clientCert.length() > 0)
@@ -1232,8 +1516,7 @@ AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* req
     cfg.insecure = overrideCfg->insecure;
     if (overrideCfg->handshakeTimeoutMs > 0)
         cfg.handshakeTimeoutMs = overrideCfg->handshakeTimeoutMs;
-    if (cfg.handshakeTimeoutMs == 0)
-        cfg.handshakeTimeoutMs = _defaultTlsConfig.handshakeTimeoutMs;
+    sanitize(&cfg);
     return cfg;
 }
 
@@ -1419,46 +1702,58 @@ bool AsyncHttpClient::isIpLiteral(const String& host) const {
     return hasColon || hasDot;
 }
 
-static bool isPublicSuffix(const String& domain) {
-    if (domain.length() == 0)
-        return false;
-    String lower = domain;
-    lower.toLowerCase();
-    for (auto suffix : kPublicSuffixes) {
-        if (lower.equals(suffix))
-            return true;
-    }
-    return false;
-}
+bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided,
+                                            bool* outHostOnly) const {
+    if (outHostOnly)
+        *outHostOnly = true;
+    String hostLower = host;
+    hostLower.toLowerCase();
+    String cleaned = normalizeDomainForStorage(domain);
 
-bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided) const {
-    String cleaned = domain;
-    cleaned.trim();
-    if (cleaned.startsWith("."))
-        cleaned.remove(0, 1);
-
+    // No Domain= attribute (or empty) => host-only cookie.
     if (!domainAttributeProvided || cleaned.length() == 0) {
-        domain = host;
+        domain = hostLower;
+        if (outHostOnly)
+            *outHostOnly = true;
         return true;
     }
 
-    String hostLower = host;
-    hostLower.toLowerCase();
-    cleaned.toLowerCase();
-
+    // Reject Domain= on IP literals and unrelated domains.
     if (isIpLiteral(hostLower))
         return false;
     if (!domainMatches(cleaned, hostLower))
         return false;
-    // Heuristic public-suffix guard: require both host and domain to have at least one dot
-    if (hostLower.indexOf('.') == -1)
-        return false;
-    if (cleaned.indexOf('.') == -1)
-        return false;
-    if (isPublicSuffix(cleaned))
-        return false;
 
-    domain = cleaned;
+    // Public suffix and "TLD-like" Domain= attributes are ignored (stored as host-only instead).
+    // This avoids broad cookie scope even when the embedded public-suffix list is incomplete.
+    if (hostLower.indexOf('.') == -1 || cleaned.indexOf('.') == -1) {
+        domain = hostLower;
+        if (outHostOnly)
+            *outHostOnly = true;
+        return true;
+    }
+
+    bool allowDomainCookie = false;
+    lock();
+    if (_allowCookieDomainAttribute) {
+        for (const auto& allowedDomain : _allowedCookieDomains) {
+            if (allowedDomain.equalsIgnoreCase(cleaned)) {
+                allowDomainCookie = true;
+                break;
+            }
+        }
+    }
+    unlock();
+
+    if (allowDomainCookie) {
+        domain = cleaned;
+        if (outHostOnly)
+            *outHostOnly = false;
+    } else {
+        domain = hostLower;
+        if (outHostOnly)
+            *outHostOnly = true;
+    }
     return true;
 }
 
@@ -1502,8 +1797,13 @@ bool AsyncHttpClient::cookieMatchesRequest(const StoredCookie& cookie, const Asy
         return false;
     if (cookie.secure && !request->isSecure())
         return false;
-    if (!domainMatches(cookie.domain, request->getHost()))
-        return false;
+    if (cookie.hostOnly) {
+        if (!request->getHost().equalsIgnoreCase(cookie.domain))
+            return false;
+    } else {
+        if (!domainMatches(cookie.domain, request->getHost()))
+            return false;
+    }
     if (!pathMatches(cookie.path, request->getPath()))
         return false;
     return !cookie.value.isEmpty();
@@ -1686,7 +1986,7 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
         pos = next;
     }
 
-    if (!normalizeCookieDomain(cookie.domain, request->getHost(), domainAttributeProvided))
+    if (!normalizeCookieDomain(cookie.domain, request->getHost(), domainAttributeProvided, &cookie.hostOnly))
         return;
     if (!cookie.path.startsWith("/"))
         cookie.path = "/" + cookie.path;

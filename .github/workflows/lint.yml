@@ -15,7 +15,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang-format
       - name: Check formatting
         run: |
-          files=$(git ls-files '*.h' '*.cpp' '*.ino')
+          # Exclude vendored third-party sources from formatting checks.
+          files=$(git ls-files '*.h' '*.cpp' '*.ino' | grep -v '^src/third_party/' || true)
           echo "Checking clang-format on: $files"
           diff_found=0
           for f in $files; do
@@ -33,7 +34,11 @@ jobs:
         run: pip install cpplint
       - name: Run cpplint
         run: |
-          cpplint --recursive --extensions=h,cpp src || true
+          # Keep third_party out of lint noise.
+          files=$(git ls-files src | grep -E '\\.(h|cpp)$' | grep -v '^src/third_party/' || true)
+          if [ -n "$files" ]; then
+            cpplint $files || true
+          fi
           # We don't fail hard yet; adjust policy later
   cppcheck:
     runs-on: ubuntu-latest
@@ -45,7 +50,7 @@ jobs:
         run: |
           cppcheck --enable=warning,style,performance --inline-suppr \
             --suppress=missingIncludeSystem \
-            -I src --quiet src || true
+            -I src --quiet src --exclude=src/third_party || true
   version-sync:
     runs-on: ubuntu-latest
     steps:

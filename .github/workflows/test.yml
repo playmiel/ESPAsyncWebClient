@@ -199,14 +199,17 @@ jobs:
           path: |
             ~/.platformio/.cache
           key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
-      - name: Run native unit tests (UrlParser)
+      - name: Run native unit tests (UrlParser + gzip)
         if: ${{ hashFiles('test/**') != '' }}
         run: |
           echo "Detected test files:" $(ls test || true)
-          pio test -e native -f test_urlparser_native -v
+          pio test -e native -f test_urlparser_native -f test_gzip_decode_native -v
       - name: Skip notice (no tests found)
         if: ${{ hashFiles('test/**') == '' }}
         run: echo "No test directory present in this ref; skipping native tests."
+      - name: Compile ESP32 (gzip enabled)
+        run: |
+          pio run -e compile_test_gzip -v
 
   python-parse-tests:
     runs-on: ubuntu-latest
