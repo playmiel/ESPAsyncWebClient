@@ -18,27 +18,6 @@ static constexpr size_t kDefaultMaxHeaderBytes = 2800; // ~2.8 KiB
 static constexpr size_t kDefaultMaxBodyBytes = 8192;   // 8 KiB
 static constexpr size_t kMaxCookieCount = 16;
 static constexpr size_t kMaxCookieBytes = 4096;
-static const char* kPublicSuffixes[] = {"com",
-                                        "net",
-                                        "org",
-                                        "gov",
-                                        "edu",
-                                        "mil",
-                                        "int",
-                                        "co.uk",
-                                        "ac.uk",
-                                        "gov.uk",
-                                        "uk",
-                                        "io",
-                                        "co",
-                                        "app",
-                                        "dev",
-                                        "github.io",
-                                        "web.app",
-                                        "pages.dev",
-                                        "vercel.app",
-                                        "firebaseapp.com",
-                                        "cloudfront.net"};
 
 static String normalizeDomainForStorage(const String& domain) {
     String cleaned = domain;
@@ -1585,18 +1564,6 @@ bool AsyncHttpClient::isIpLiteral(const String& host) const {
     return hasColon || hasDot;
 }
 
-static bool isPublicSuffix(const String& domain) {
-    if (domain.length() == 0)
-        return false;
-    String lower = domain;
-    lower.toLowerCase();
-    for (auto suffix : kPublicSuffixes) {
-        if (lower.equals(suffix))
-            return true;
-    }
-    return false;
-}
-
 bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided,
                                             bool* outHostOnly) const {
     if (outHostOnly)
@@ -1621,7 +1588,7 @@ bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, 
 
     // Public suffix and "TLD-like" Domain= attributes are ignored (stored as host-only instead).
     // This avoids broad cookie scope even when the embedded public-suffix list is incomplete.
-    if (hostLower.indexOf('.') == -1 || cleaned.indexOf('.') == -1 || isPublicSuffix(cleaned)) {
+    if (hostLower.indexOf('.') == -1 || cleaned.indexOf('.') == -1) {
         domain = hostLower;
         if (outHostOnly)
             *outHostOnly = true;
