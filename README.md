@@ -468,7 +468,7 @@ Common HTTPS errors:
 - Redirects disabled by default; opt-in via `client.setFollowRedirects(...)`
 - No long-lived keep-alive: default header `Connection: close`; no connection reuse currently.
 - Manual timeout loop required if AsyncTCP version lacks `setTimeout` (call `client.loop()` in `loop()`).
-- No specific content-encoding handling (gzip/deflate ignored if sent).
+- No general content-encoding handling (br/deflate not supported); optional `gzip` decode is available via `ASYNC_HTTP_ENABLE_GZIP_DECODE`.
 
 ## Object lifecycle / Ownership
 
@@ -505,6 +505,7 @@ Single authoritative list (kept in sync with `HttpCommon.h`):
 | -15 | TLS_CERT_INVALID | TLS certificate validation failed |
 | -16 | TLS_FINGERPRINT_MISMATCH | TLS fingerprint pinning rejected the peer certificate |
 | -17 | TLS_HANDSHAKE_TIMEOUT | TLS handshake exceeded the configured timeout |
+| -18 | GZIP_DECODE_FAILED | Failed to decode gzip body (`Content-Encoding: gzip`) |
 | >0 | (AsyncTCP) | Not used: transport errors are mapped to CONNECTION_FAILED |
 
 Example mapping in a callback:
@@ -577,7 +578,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 - Global body chunk callback (per-request callback removed for API simplicity)
 - Basic Auth helper (request->setBasicAuth)
 - Query param builder (addQueryParam/finalizeQueryParams)
-- Optional Accept-Encoding: gzip (no automatic decompression yet)
+- Optional Accept-Encoding: gzip (+ optional transparent decode via `ASYNC_HTTP_ENABLE_GZIP_DECODE`)
 - Separate connect timeout and total timeout
 - Optional request queue limiting parallel connections (setMaxParallel)
 - Soft response buffering guard (`setMaxBodySize`) to fail fast on oversized payloads
@@ -586,11 +587,16 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Gzip / Compression
 
-Current: only the `Accept-Encoding: gzip` header can be added via `enableGzipAcceptEncoding(true)`.
-The library DOES NOT yet decompress gzip payloads. If you don't want compressed responses, simply don't enable the header.
+Default: only the `Accept-Encoding: gzip` header can be added via `enableGzipAcceptEncoding(true)`.
 
-Important: calling `enableGzipAcceptEncoding(false)` does not remove the header if it was already added earlier on the same request instance. Create a new request without enabling it to avoid sending the header.
-A future optional flag (`ASYNC_HTTP_ENABLE_GZIP_DECODE`) may add a tiny inflater (miniz/zlib) after flash/RAM impact is evaluated.
+Optional decode: build with `-DASYNC_HTTP_ENABLE_GZIP_DECODE=1` to transparently inflate `Content-Encoding: gzip` responses (both in-memory body and `client.onBodyChunk(...)` stream).
+
+Notes:
+
+- If you don't want compressed responses, simply don't enable the header.
+- `enableGzipAcceptEncoding(false)` removes `Accept-Encoding` from the request's header list (or call `request.removeHeader("Accept-Encoding")`).
+- `Content-Length` (when present) refers to the *compressed* payload size; completion detection still follows the wire length.
+- RAM impact: enabling gzip decode allocates an internal 32KB sliding window per active gzip-decoded response (plus small state).
 
 ### HTTPS quick reference
 

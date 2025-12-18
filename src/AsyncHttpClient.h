@@ -11,6 +11,9 @@
 #include "HttpResponse.h"
 #include "HttpCommon.h"
 #include "AsyncTransport.h"
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+#include "GzipDecoder.h"
+#endif
 #include <AsyncTCP.h>
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
 #include <freertos/FreeRTOS.h>
@@ -147,6 +150,7 @@ class AsyncHttpClient {
         bool responseProcessed;
         size_t expectedContentLength;
         size_t receivedContentLength;
+        size_t receivedBodyLength;
         bool chunked;
         bool chunkedComplete;
         size_t currentChunkRemaining;
@@ -164,16 +168,26 @@ class AsyncHttpClient {
         bool serverRequestedClose;
         bool usingPooledConnection;
         AsyncHttpTLSConfig resolvedTlsConfig;
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+        bool gzipEncoded;
+        bool gzipDecodeActive;
+        GzipDecoder gzipDecoder;
+#endif
 #if !ASYNC_TCP_HAS_TIMEOUT
         uint32_t timeoutTimer;
 #endif
         RequestContext()
             : request(nullptr), response(nullptr), transport(nullptr), headersComplete(false), responseProcessed(false),
-              expectedContentLength(0), receivedContentLength(0), chunked(false), chunkedComplete(false),
+              expectedContentLength(0), receivedContentLength(0), receivedBodyLength(0), chunked(false),
+              chunkedComplete(false),
               currentChunkRemaining(0), awaitingFinalChunkTerminator(false), id(0), trailerLineCount(0),
               redirectCount(0), notifiedEndCallback(false), connectStartMs(0), connectTimeoutMs(0), headersSent(false),
               streamingBodyInProgress(false), requestKeepAlive(false), serverRequestedClose(false),
               usingPooledConnection(false)
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+              ,
+              gzipEncoded(false), gzipDecodeActive(false)
+#endif
 #if !ASYNC_TCP_HAS_TIMEOUT
               ,
               timeoutTimer(0)

@@ -6,7 +6,7 @@
 // Feature flags (can be overridden before including library headers)
 #ifndef ASYNC_HTTP_ENABLE_GZIP_DECODE
 #define ASYNC_HTTP_ENABLE_GZIP_DECODE                                                                                  \
-    0 // 0 = only set Accept-Encoding header (no inflation). 1 = future: enable minimal gzip inflate.
+    0 // 0 = no gzip inflation. 1 = enable transparent gzip response decoding (Content-Encoding: gzip).
 #endif
 
 // Security: allow enabling insecure TLS (skips CA validation) only when explicitly opted in at build time.
@@ -54,7 +54,8 @@ enum HttpClientError {
     TLS_HANDSHAKE_FAILED = -14,
     TLS_CERT_INVALID = -15,
     TLS_FINGERPRINT_MISMATCH = -16,
-    TLS_HANDSHAKE_TIMEOUT = -17
+    TLS_HANDSHAKE_TIMEOUT = -17,
+    GZIP_DECODE_FAILED = -18
 };
 
 inline const char* httpClientErrorToString(HttpClientError error) {
@@ -93,6 +94,8 @@ inline const char* httpClientErrorToString(HttpClientError error) {
         return "TLS fingerprint mismatch";
     case TLS_HANDSHAKE_TIMEOUT:
         return "TLS handshake timeout";
+    case GZIP_DECODE_FAILED:
+        return "Failed to decode gzip body";
     default:
         return "Network error";
     }

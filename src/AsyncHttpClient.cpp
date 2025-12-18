@@ -651,18 +651,97 @@ void AsyncHttpClient::handleConnect(RequestContext* context) {
 }
 
 void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len) {
-    bool storeBody = context && context->request && !context->request->getNoStoreBody();
-    bool bufferThisChunk = context && (!context->headersComplete || context->chunked);
+    if (!context)
+        return;
+    bool storeBody = context->request && !context->request->getNoStoreBody();
+    bool bufferThisChunk = (!context->headersComplete || context->chunked);
     if (bufferThisChunk)
         context->responseBuffer.concat(data, len);
     bool enforceLimit = shouldEnforceBodyLimit(context);
-    auto wouldExceedLimit = [&](size_t incoming) -> bool {
+    auto wouldExceedBodyLimit = [&](size_t incoming) -> bool {
         if (!enforceLimit)
             return false;
-        size_t current = context->receivedContentLength;
+        size_t current = context->receivedBodyLength;
         if (current >= _maxBodySize)
             return true;
         return incoming > (_maxBodySize - current);
+    };
+
+    auto emitBodyBytes = [&](const char* out, size_t outLen) -> bool {
+        if (!out || outLen == 0)
+            return true;
+        if (wouldExceedBodyLimit(outLen)) {
+            triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+            return false;
+        }
+        if (storeBody) {
+            context->response->appendBody(out, outLen);
+        }
+        context->receivedBodyLength += outLen;
+        auto cb = _bodyChunkCallback;
+        if (cb)
+            cb(out, outLen, false);
+        return true;
+    };
+
+    auto deliverWireBytes = [&](const char* wire, size_t wireLen) -> bool {
+        if (wireLen == 0)
+            return true;
+        context->receivedContentLength += wireLen;
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+        if (context->gzipDecodeActive) {
+            size_t offset = 0;
+            while (offset < wireLen) {
+                const uint8_t* outPtr = nullptr;
+                size_t outLen = 0;
+                size_t consumed = 0;
+                GzipDecoder::Result r = context->gzipDecoder.write(reinterpret_cast<const uint8_t*>(wire + offset),
+                                                                  wireLen - offset, &consumed, &outPtr, &outLen, true);
+                if (outLen > 0) {
+                    if (!emitBodyBytes(reinterpret_cast<const char*>(outPtr), outLen))
+                        return false;
+                }
+                if (r == GzipDecoder::Result::kError) {
+                    triggerError(context, GZIP_DECODE_FAILED, context->gzipDecoder.lastError());
+                    return false;
+                }
+                offset += consumed;
+                if (consumed == 0 && outLen == 0) {
+                    triggerError(context, GZIP_DECODE_FAILED, "Gzip decoder stalled");
+                    return false;
+                }
+                if (r == GzipDecoder::Result::kNeedMoreInput && offset >= wireLen) {
+                    break;
+                }
+            }
+            return true;
+        }
+#endif
+        return emitBodyBytes(wire, wireLen);
+    };
+
+    auto finalizeDecoding = [&]() -> bool {
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+        if (!context->gzipDecodeActive)
+            return true;
+        for (;;) {
+            const uint8_t* outPtr = nullptr;
+            size_t outLen = 0;
+            GzipDecoder::Result r = context->gzipDecoder.finish(&outPtr, &outLen);
+            if (outLen > 0) {
+                if (!emitBodyBytes(reinterpret_cast<const char*>(outPtr), outLen))
+                    return false;
+            }
+            if (r == GzipDecoder::Result::kDone)
+                return true;
+            if (r == GzipDecoder::Result::kOk)
+                continue;
+            triggerError(context, GZIP_DECODE_FAILED, context->gzipDecoder.lastError());
+            return false;
+        }
+#else
+        return true;
+#endif
     };
 
     if (!context->headersComplete) {
@@ -679,12 +758,17 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             String headerData = context->responseBuffer.substring(0, headerEnd);
             if (parseResponseHeaders(context, headerData)) {
                 context->headersComplete = true;
-                if (enforceLimit && context->expectedContentLength > 0 &&
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+                bool gzipActive = context->gzipDecodeActive;
+#else
+                bool gzipActive = false;
+#endif
+                if (enforceLimit && !gzipActive && context->expectedContentLength > 0 &&
                     context->expectedContentLength > _maxBodySize) {
                     triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                     return;
                 }
-                if (storeBody && context->expectedContentLength > 0 && !context->chunked &&
+                if (storeBody && !gzipActive && context->expectedContentLength > 0 && !context->chunked &&
                     (!enforceLimit || context->expectedContentLength <= _maxBodySize)) {
                     context->response->reserveBody(context->expectedContentLength);
                 }
@@ -693,17 +777,12 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                     return;
                 if (!context->chunked && context->responseBuffer.length() > 0) {
                     size_t incomingLen = context->responseBuffer.length();
-                    if (wouldExceedLimit(incomingLen)) {
+                    if (!gzipActive && wouldExceedBodyLimit(incomingLen)) {
                         triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                         return;
                     }
-                    if (storeBody) {
-                        context->response->appendBody(context->responseBuffer.c_str(), incomingLen);
-                    }
-                    context->receivedContentLength += incomingLen;
-                    auto cb = _bodyChunkCallback;
-                    if (cb)
-                        cb(context->responseBuffer.c_str(), incomingLen, false);
+                    if (!deliverWireBytes(context->responseBuffer.c_str(), incomingLen))
+                        return;
                     context->responseBuffer = "";
                 }
             } else {
@@ -712,17 +791,17 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             }
         }
     } else if (!context->chunked) {
-        if (wouldExceedLimit(len)) {
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+        bool gzipActive = context->gzipDecodeActive;
+#else
+        bool gzipActive = false;
+#endif
+        if (!gzipActive && wouldExceedBodyLimit(len)) {
             triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
             return;
         }
-        if (storeBody) {
-            context->response->appendBody(data, len);
-        }
-        context->receivedContentLength += len;
-        auto cb2 = _bodyChunkCallback;
-        if (cb2)
-            cb2(data, len, false);
+        if (!deliverWireBytes(data, len))
+            return;
     }
 
     while (context->headersComplete && context->chunked && !context->chunkedComplete) {
@@ -796,7 +875,12 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                 triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size parse error");
                 return;
             }
-            if (chunkSize > 0 && wouldExceedLimit(chunkSize)) {
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+            bool gzipActive = context->gzipDecodeActive;
+#else
+            bool gzipActive = false;
+#endif
+            if (!gzipActive && chunkSize > 0 && wouldExceedBodyLimit(chunkSize)) {
                 triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                 return;
             }
@@ -817,18 +901,9 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
             return;
         }
         size_t chunkLen = context->currentChunkRemaining;
-        if (wouldExceedLimit(chunkLen)) {
-            triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
-            return;
-        }
         const char* chunkPtr = context->responseBuffer.c_str();
-        if (storeBody) {
-            context->response->appendBody(chunkPtr, chunkLen);
-        }
-        context->receivedContentLength += chunkLen;
-        auto cb3 = _bodyChunkCallback;
-        if (cb3)
-            cb3(chunkPtr, chunkLen, false);
+        if (!deliverWireBytes(chunkPtr, chunkLen))
+            return;
         context->responseBuffer.remove(0, needed);
         context->currentChunkRemaining = 0;
     }
@@ -841,6 +916,8 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                  context->receivedContentLength >= context->expectedContentLength)
             complete = true;
         if (complete) {
+            if (!finalizeDecoding())
+                return;
             processResponse(context);
         }
     }
@@ -893,6 +970,51 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context) {
         triggerError(context, CONNECTION_CLOSED_MID_BODY, "Truncated response");
         return;
     }
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+    if (context->gzipDecodeActive) {
+        bool storeBody = context->request && !context->request->getNoStoreBody();
+        bool enforceLimit = shouldEnforceBodyLimit(context);
+        auto wouldExceedBodyLimit = [&](size_t incoming) -> bool {
+            if (!enforceLimit)
+                return false;
+            size_t current = context->receivedBodyLength;
+            if (current >= _maxBodySize)
+                return true;
+            return incoming > (_maxBodySize - current);
+        };
+        auto emitBodyBytes = [&](const char* out, size_t outLen) -> bool {
+            if (!out || outLen == 0)
+                return true;
+            if (wouldExceedBodyLimit(outLen)) {
+                triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
+                return false;
+            }
+            if (storeBody) {
+                context->response->appendBody(out, outLen);
+            }
+            context->receivedBodyLength += outLen;
+            auto cb = _bodyChunkCallback;
+            if (cb)
+                cb(out, outLen, false);
+            return true;
+        };
+        for (;;) {
+            const uint8_t* outPtr = nullptr;
+            size_t outLen = 0;
+            GzipDecoder::Result r = context->gzipDecoder.finish(&outPtr, &outLen);
+            if (outLen > 0) {
+                if (!emitBodyBytes(reinterpret_cast<const char*>(outPtr), outLen))
+                    return;
+            }
+            if (r == GzipDecoder::Result::kDone)
+                break;
+            if (r == GzipDecoder::Result::kOk)
+                continue;
+            triggerError(context, GZIP_DECODE_FAILED, context->gzipDecoder.lastError());
+            return;
+        }
+    }
+#endif
     // Otherwise success: either Content-Length reached, or no Content-Length and closure marks the end
     processResponse(context);
 }
@@ -939,6 +1061,16 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
                 context->response->setContentLength(context->expectedContentLength);
             } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
                 context->chunked = true;
+            } else if (name.equalsIgnoreCase("Content-Encoding")) {
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+                String lower = value;
+                lower.toLowerCase();
+                if (lower.indexOf("gzip") != -1) {
+                    context->gzipEncoded = true;
+                    context->gzipDecodeActive = true;
+                    context->gzipDecoder.begin();
+                }
+#endif
             } else if (name.equalsIgnoreCase("Connection")) {
                 String lower = value;
                 lower.toLowerCase();
@@ -1212,6 +1344,7 @@ void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttp
     context->responseProcessed = false;
     context->expectedContentLength = 0;
     context->receivedContentLength = 0;
+    context->receivedBodyLength = 0;
     context->chunked = false;
     context->chunkedComplete = false;
     context->currentChunkRemaining = 0;
@@ -1224,6 +1357,11 @@ void AsyncHttpClient::resetContextForRedirect(RequestContext* context, AsyncHttp
     context->serverRequestedClose = false;
     context->usingPooledConnection = false;
     context->resolvedTlsConfig = AsyncHttpTLSConfig();
+#if ASYNC_HTTP_ENABLE_GZIP_DECODE
+    context->gzipEncoded = false;
+    context->gzipDecodeActive = false;
+    context->gzipDecoder.reset();
+#endif
 #if !ASYNC_TCP_HAS_TIMEOUT
     context->timeoutTimer = millis();
 #endif
