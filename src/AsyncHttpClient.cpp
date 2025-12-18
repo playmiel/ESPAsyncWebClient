@@ -40,6 +40,15 @@ static const char* kPublicSuffixes[] = {"com",
                                         "firebaseapp.com",
                                         "cloudfront.net"};
 
+static String normalizeDomainForStorage(const String& domain) {
+    String cleaned = domain;
+    cleaned.trim();
+    if (cleaned.startsWith("."))
+        cleaned.remove(0, 1);
+    cleaned.toLowerCase();
+    return cleaned;
+}
+
 static bool equalsIgnoreCase(const String& a, const char* b) {
     size_t lenA = a.length();
     size_t lenB = strlen(b);
@@ -180,17 +189,17 @@ AsyncHttpClient::~AsyncHttpClient() {
 }
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
-void AsyncHttpClient::lock() {
+void AsyncHttpClient::lock() const {
     if (_reqMutex)
         xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
 }
-void AsyncHttpClient::unlock() {
+void AsyncHttpClient::unlock() const {
     if (_reqMutex)
         xSemaphoreGiveRecursive(_reqMutex);
 }
 #else
-void AsyncHttpClient::lock() {}
-void AsyncHttpClient::unlock() {}
+void AsyncHttpClient::lock() const {}
+void AsyncHttpClient::unlock() const {}
 #endif
 
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
@@ -282,6 +291,37 @@ void AsyncHttpClient::setFollowRedirects(bool enable, uint8_t maxHops) {
     unlock();
 }
 
+void AsyncHttpClient::setRedirectHeaderPolicy(RedirectHeaderPolicy policy) {
+    lock();
+    _redirectHeaderPolicy = policy;
+    unlock();
+}
+
+void AsyncHttpClient::addRedirectSafeHeader(const char* name) {
+    if (!name || strlen(name) == 0)
+        return;
+    String headerName(name);
+    headerName.trim();
+    if (headerName.length() == 0)
+        return;
+    headerName.toLowerCase();
+    lock();
+    for (const auto& existing : _redirectSafeHeaders) {
+        if (existing.equalsIgnoreCase(headerName)) {
+            unlock();
+            return;
+        }
+    }
+    _redirectSafeHeaders.push_back(headerName);
+    unlock();
+}
+
+void AsyncHttpClient::clearRedirectSafeHeaders() {
+    lock();
+    _redirectSafeHeaders.clear();
+    unlock();
+}
+
 void AsyncHttpClient::setMaxHeaderBytes(size_t maxBytes) {
     lock();
     _maxHeaderBytes = maxBytes;
@@ -363,6 +403,37 @@ void AsyncHttpClient::clearCookies() {
     unlock();
 }
 
+void AsyncHttpClient::setAllowCookieDomainAttribute(bool enable) {
+    lock();
+    _allowCookieDomainAttribute = enable;
+    unlock();
+}
+
+void AsyncHttpClient::addAllowedCookieDomain(const char* domain) {
+    if (!domain || strlen(domain) == 0)
+        return;
+    String normalized = normalizeDomainForStorage(String(domain));
+    if (normalized.length() == 0)
+        return;
+    if (normalized.indexOf('.') == -1)
+        return;
+    lock();
+    for (const auto& existing : _allowedCookieDomains) {
+        if (existing.equalsIgnoreCase(normalized)) {
+            unlock();
+            return;
+        }
+    }
+    _allowedCookieDomains.push_back(normalized);
+    unlock();
+}
+
+void AsyncHttpClient::clearAllowedCookieDomains() {
+    lock();
+    _allowedCookieDomains.clear();
+    unlock();
+}
+
 void AsyncHttpClient::setCookie(const char* name, const char* value, const char* path, const char* domain,
                                 bool secure) {
     if (!name || strlen(name) == 0)
@@ -379,6 +450,7 @@ void AsyncHttpClient::setCookie(const char* name, const char* value, const char*
     cookie.value = value ? String(value) : String();
     cookie.path = (path && strlen(path) > 0) ? String(path) : String("/");
     cookie.domain = domain ? String(domain) : String();
+    cookie.hostOnly = false; // Manual cookies are treated as domain cookies (domain=="" means "any host").
     cookie.secure = secure;
     cookie.createdAt = now;
     cookie.lastAccessAt = now;
@@ -1061,6 +1133,13 @@ bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpReq
     newRequest->setNoStoreBody(context->request->getNoStoreBody());
 
     bool sameOrigin = isSameOrigin(context->request, newRequest);
+    RedirectHeaderPolicy headerPolicy;
+    std::vector<String> redirectSafeHeaders;
+    lock();
+    headerPolicy = _redirectHeaderPolicy;
+    redirectSafeHeaders = _redirectSafeHeaders;
+    unlock();
+
     auto isCrossOriginSensitiveHeader = [](const String& name) {
         String lower = name;
         lower.toLowerCase();
@@ -1068,14 +1147,49 @@ bool AsyncHttpClient::buildRedirectRequest(RequestContext* context, AsyncHttpReq
                lower.equals("cookie2") || lower.startsWith("x-api-key") || lower.startsWith("x-auth-token") ||
                lower.startsWith("x-access-token");
     };
+    auto isDefaultCrossOriginSafeHeader = [dropBody](const String& name) {
+        if (equalsIgnoreCase(name, "User-Agent"))
+            return true;
+        if (equalsIgnoreCase(name, "Accept"))
+            return true;
+        if (equalsIgnoreCase(name, "Accept-Encoding"))
+            return true;
+        if (equalsIgnoreCase(name, "Accept-Language"))
+            return true;
+        if (!dropBody && equalsIgnoreCase(name, "Content-Type"))
+            return true;
+        return false;
+    };
+    auto isAllowlistedForCrossOrigin = [&redirectSafeHeaders](const String& name) {
+        String lower = name;
+        lower.toLowerCase();
+        for (const auto& allowed : redirectSafeHeaders) {
+            if (allowed.equalsIgnoreCase(lower))
+                return true;
+        }
+        return false;
+    };
     const auto& headers = context->request->getHeaders();
     for (const auto& hdr : headers) {
         if (hdr.name.equalsIgnoreCase("Content-Length"))
             continue;
+        // Always rebuild cookies for the redirected request from the cookie jar (avoids duplicates and leaks).
+        if (hdr.name.equalsIgnoreCase("Cookie") || hdr.name.equalsIgnoreCase("Cookie2"))
+            continue;
+        // Prevent callers from pinning an old Host header across redirects.
+        if (hdr.name.equalsIgnoreCase("Host"))
+            continue;
         if (dropBody && hdr.name.equalsIgnoreCase("Content-Type"))
             continue;
-        if (!sameOrigin && isCrossOriginSensitiveHeader(hdr.name))
-            continue;
+        if (!sameOrigin) {
+            if (headerPolicy == RedirectHeaderPolicy::kLegacyDropSensitiveOnly) {
+                if (isCrossOriginSensitiveHeader(hdr.name))
+                    continue;
+            } else if (headerPolicy == RedirectHeaderPolicy::kDropAllCrossOrigin) {
+                if (!isDefaultCrossOriginSafeHeader(hdr.name) && !isAllowlistedForCrossOrigin(hdr.name))
+                    continue;
+            }
+        }
         newRequest->setHeader(hdr.name, hdr.value);
     }
 
@@ -1248,12 +1362,32 @@ bool AsyncHttpClient::shouldEnforceBodyLimit(RequestContext* context) {
 }
 
 AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* request) const {
-    AsyncHttpTLSConfig cfg = _defaultTlsConfig;
-    if (!request || !request->hasTlsConfig())
+    AsyncHttpTLSConfig cfg;
+    lock();
+    cfg = _defaultTlsConfig;
+    unlock();
+
+    auto sanitize = [](AsyncHttpTLSConfig* c) {
+        if (!c)
+            return;
+        if (c->handshakeTimeoutMs == 0)
+            c->handshakeTimeoutMs = 12000;
+#if !ASYNC_HTTP_ALLOW_INSECURE_TLS
+        // Allow skipping CA validation only when pinning is configured.
+        if (c->insecure && c->fingerprint.length() == 0)
+            c->insecure = false;
+#endif
+    };
+
+    if (!request || !request->hasTlsConfig()) {
+        sanitize(&cfg);
         return cfg;
+    }
     const AsyncHttpTLSConfig* overrideCfg = request->getTlsConfig();
-    if (!overrideCfg)
+    if (!overrideCfg) {
+        sanitize(&cfg);
         return cfg;
+    }
     if (overrideCfg->caCert.length() > 0)
         cfg.caCert = overrideCfg->caCert;
     if (overrideCfg->clientCert.length() > 0)
@@ -1265,8 +1399,7 @@ AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* req
     cfg.insecure = overrideCfg->insecure;
     if (overrideCfg->handshakeTimeoutMs > 0)
         cfg.handshakeTimeoutMs = overrideCfg->handshakeTimeoutMs;
-    if (cfg.handshakeTimeoutMs == 0)
-        cfg.handshakeTimeoutMs = _defaultTlsConfig.handshakeTimeoutMs;
+    sanitize(&cfg);
     return cfg;
 }
 
@@ -1464,34 +1597,58 @@ static bool isPublicSuffix(const String& domain) {
     return false;
 }
 
-bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided) const {
-    String cleaned = domain;
-    cleaned.trim();
-    if (cleaned.startsWith("."))
-        cleaned.remove(0, 1);
+bool AsyncHttpClient::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided,
+                                            bool* outHostOnly) const {
+    if (outHostOnly)
+        *outHostOnly = true;
+    String hostLower = host;
+    hostLower.toLowerCase();
+    String cleaned = normalizeDomainForStorage(domain);
 
+    // No Domain= attribute (or empty) => host-only cookie.
     if (!domainAttributeProvided || cleaned.length() == 0) {
-        domain = host;
+        domain = hostLower;
+        if (outHostOnly)
+            *outHostOnly = true;
         return true;
     }
 
-    String hostLower = host;
-    hostLower.toLowerCase();
-    cleaned.toLowerCase();
-
+    // Reject Domain= on IP literals and unrelated domains.
     if (isIpLiteral(hostLower))
         return false;
     if (!domainMatches(cleaned, hostLower))
         return false;
-    // Heuristic public-suffix guard: require both host and domain to have at least one dot
-    if (hostLower.indexOf('.') == -1)
-        return false;
-    if (cleaned.indexOf('.') == -1)
-        return false;
-    if (isPublicSuffix(cleaned))
-        return false;
 
-    domain = cleaned;
+    // Public suffix and "TLD-like" Domain= attributes are ignored (stored as host-only instead).
+    // This avoids broad cookie scope even when the embedded public-suffix list is incomplete.
+    if (hostLower.indexOf('.') == -1 || cleaned.indexOf('.') == -1 || isPublicSuffix(cleaned)) {
+        domain = hostLower;
+        if (outHostOnly)
+            *outHostOnly = true;
+        return true;
+    }
+
+    bool allowDomainCookie = false;
+    lock();
+    if (_allowCookieDomainAttribute) {
+        for (const auto& allowedDomain : _allowedCookieDomains) {
+            if (allowedDomain.equalsIgnoreCase(cleaned)) {
+                allowDomainCookie = true;
+                break;
+            }
+        }
+    }
+    unlock();
+
+    if (allowDomainCookie) {
+        domain = cleaned;
+        if (outHostOnly)
+            *outHostOnly = false;
+    } else {
+        domain = hostLower;
+        if (outHostOnly)
+            *outHostOnly = true;
+    }
     return true;
 }
 
@@ -1535,8 +1692,13 @@ bool AsyncHttpClient::cookieMatchesRequest(const StoredCookie& cookie, const Asy
         return false;
     if (cookie.secure && !request->isSecure())
         return false;
-    if (!domainMatches(cookie.domain, request->getHost()))
-        return false;
+    if (cookie.hostOnly) {
+        if (!request->getHost().equalsIgnoreCase(cookie.domain))
+            return false;
+    } else {
+        if (!domainMatches(cookie.domain, request->getHost()))
+            return false;
+    }
     if (!pathMatches(cookie.path, request->getPath()))
         return false;
     return !cookie.value.isEmpty();
@@ -1719,7 +1881,7 @@ void AsyncHttpClient::storeResponseCookie(const AsyncHttpRequest* request, const
         pos = next;
     }
 
-    if (!normalizeCookieDomain(cookie.domain, request->getHost(), domainAttributeProvided))
+    if (!normalizeCookieDomain(cookie.domain, request->getHost(), domainAttributeProvided, &cookie.hostOnly))
         return;
     if (!cookie.path.startsWith("/"))
         cookie.path = "/" + cookie.path;

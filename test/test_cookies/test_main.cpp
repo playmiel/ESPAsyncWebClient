@@ -71,6 +71,53 @@ static void test_rejects_mismatched_domain_attribute() {
     TEST_ASSERT_EQUAL(0, (int)client._cookies.size());
 }
 
+static void test_rejects_parent_domain_attribute_by_default() {
+    AsyncHttpClient client;
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://api.example.com/");
+
+    client.storeResponseCookie(&req, "s=1; Domain=example.com; Path=/");
+    AsyncHttpRequest sameHost(HTTP_METHOD_GET, "http://api.example.com/");
+    client.applyCookies(&sameHost);
+    TEST_ASSERT_EQUAL_STRING("s=1", sameHost.getHeader("Cookie").c_str());
+
+    AsyncHttpRequest otherSubdomain(HTTP_METHOD_GET, "http://foo.example.com/");
+    client.applyCookies(&otherSubdomain);
+    TEST_ASSERT_TRUE(otherSubdomain.getHeader("Cookie").isEmpty());
+    TEST_ASSERT_EQUAL(1, (int)client._cookies.size());
+}
+
+static void test_allows_allowlisted_parent_domain_attribute() {
+    AsyncHttpClient client;
+    client.setAllowCookieDomainAttribute(true);
+    client.addAllowedCookieDomain("example.com");
+
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://api.example.com/");
+    client.storeResponseCookie(&req, "s=1; Domain=example.com; Path=/");
+
+    AsyncHttpRequest follow(HTTP_METHOD_GET, "http://foo.example.com/");
+    client.applyCookies(&follow);
+    TEST_ASSERT_EQUAL_STRING("s=1", follow.getHeader("Cookie").c_str());
+    TEST_ASSERT_EQUAL(1, (int)client._cookies.size());
+}
+
+static void test_rejects_public_suffix_even_if_allowlisted() {
+    AsyncHttpClient client;
+    client.setAllowCookieDomainAttribute(true);
+    client.addAllowedCookieDomain("co.uk");
+
+    AsyncHttpRequest req(HTTP_METHOD_GET, "http://a.co.uk/");
+    client.storeResponseCookie(&req, "s=1; Domain=co.uk; Path=/");
+
+    AsyncHttpRequest sameHost(HTTP_METHOD_GET, "http://a.co.uk/");
+    client.applyCookies(&sameHost);
+    TEST_ASSERT_EQUAL_STRING("s=1", sameHost.getHeader("Cookie").c_str());
+
+    AsyncHttpRequest otherSubdomain(HTTP_METHOD_GET, "http://b.co.uk/");
+    client.applyCookies(&otherSubdomain);
+    TEST_ASSERT_TRUE(otherSubdomain.getHeader("Cookie").isEmpty());
+    TEST_ASSERT_EQUAL(1, (int)client._cookies.size());
+}
+
 static void test_cookie_path_matching_rfc6265_rule() {
     AsyncHttpClient client;
     AsyncHttpRequest req(HTTP_METHOD_GET, "http://example.com/administrator");
@@ -154,6 +201,9 @@ int runUnityTests() {
     RUN_TEST(test_max_age_removes_cookie);
     RUN_TEST(test_clear_and_public_set_cookie_api);
     RUN_TEST(test_rejects_mismatched_domain_attribute);
+    RUN_TEST(test_rejects_parent_domain_attribute_by_default);
+    RUN_TEST(test_allows_allowlisted_parent_domain_attribute);
+    RUN_TEST(test_rejects_public_suffix_even_if_allowlisted);
     RUN_TEST(test_cookie_path_matching_rfc6265_rule);
     RUN_TEST(test_expires_and_max_age_enforcement);
     RUN_TEST(test_cookie_jar_eviction_is_lru_session_then_scope);

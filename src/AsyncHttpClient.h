@@ -25,6 +25,15 @@ class AsyncHttpClient {
     typedef std::function<void(const char* data, size_t len, bool final)> BodyChunkCallback; // global
     // (Per-request chunk callback removed for API simplification)
 
+    enum class RedirectHeaderPolicy {
+        // Cross-origin redirects forward only a small safe set (+ any added via allowlist).
+        kDropAllCrossOrigin,
+        // Legacy heuristic-based filtering on cross-origin redirects.
+        kLegacyDropSensitiveOnly,
+        // Preserve all request headers across redirects (unsafe).
+        kPreserveAll
+    };
+
     AsyncHttpClient();
     ~AsyncHttpClient();
 
@@ -82,8 +91,17 @@ class AsyncHttpClient {
         return _defaultTlsConfig;
     }
     void clearCookies();
+    // By default, Domain= attributes are rejected unless they exactly match the request host.
+    // To allow a server to set cookies for a parent domain (e.g., Domain=example.com from api.example.com),
+    // enable this and add allowed parent domains explicitly.
+    void setAllowCookieDomainAttribute(bool enable);
+    void addAllowedCookieDomain(const char* domain);
+    void clearAllowedCookieDomains();
     void setCookie(const char* name, const char* value, const char* path = "/", const char* domain = nullptr,
                    bool secure = false);
+    void setRedirectHeaderPolicy(RedirectHeaderPolicy policy);
+    void addRedirectSafeHeader(const char* name);
+    void clearRedirectSafeHeaders();
 
     // Advanced request method
     uint32_t request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
@@ -109,8 +127,8 @@ class AsyncHttpClient {
 
   private:
     // Lightweight locking helpers (no-op unless ESP32 auto-loop task is enabled)
-    void lock();
-    void unlock();
+    void lock() const;
+    void unlock() const;
 
     // Internal auto-loop task for fallback timeout mode
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
@@ -180,6 +198,10 @@ class AsyncHttpClient {
     AsyncHttpTLSConfig _defaultTlsConfig;
     bool _keepAliveEnabled = false;
     uint32_t _keepAliveIdleMs = 5000;
+    bool _allowCookieDomainAttribute = false;
+    std::vector<String> _allowedCookieDomains;
+    RedirectHeaderPolicy _redirectHeaderPolicy = RedirectHeaderPolicy::kDropAllCrossOrigin;
+    std::vector<String> _redirectSafeHeaders;
 
     struct PooledConnection {
         AsyncTransport* transport = nullptr;
@@ -192,7 +214,7 @@ class AsyncHttpClient {
     std::vector<PooledConnection> _idleConnections;
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
-    SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
+    mutable SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
 #endif
 
     // Internal methods
@@ -231,6 +253,7 @@ class AsyncHttpClient {
         String value;
         String domain;
         String path;
+        bool hostOnly = true;
         bool secure = false;
         int64_t expiresAt = -1; // -1 means no expiration set
         int64_t createdAt = 0;
@@ -245,7 +268,8 @@ class AsyncHttpClient {
     void evictOneCookieLocked();
     bool domainMatches(const String& cookieDomain, const String& host) const;
     bool pathMatches(const String& cookiePath, const String& requestPath) const;
-    bool normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided) const;
+    bool normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided,
+                               bool* outHostOnly) const;
     bool isIpLiteral(const String& host) const;
 
   public:

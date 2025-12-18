@@ -7,7 +7,7 @@
 
 An asynchronous HTTP client library for ESP32 microcontrollers, built on top of AsyncTCP. This library provides a simple and efficient way to make HTTP requests without blocking your main program execution.
 
-> 🔐 **HTTPS Ready**: TLS/HTTPS is available via AsyncTCP + mbedTLS. Load a CA certificate or fingerprint before talking to real servers, or call `client.setTlsInsecure(true)` only for testing. See the *HTTPS / TLS configuration* section below.
+> 🔐 **HTTPS Ready**: TLS/HTTPS is available via AsyncTCP + mbedTLS. Load a CA certificate or fingerprint before talking to real servers. `client.setTlsInsecure(true)` is intended for debug/pinning scenarios; fully insecure TLS requires an explicit build-time opt-in (see the *HTTPS / TLS configuration* section below).
 
 ## Features
 
@@ -167,12 +167,26 @@ void setKeepAlive(bool enable, uint16_t idleMs = 5000);
 
 // Cookie jar helpers
 void clearCookies();
+void setAllowCookieDomainAttribute(bool enable);
+void addAllowedCookieDomain(const char* domain);
+void clearAllowedCookieDomains();
 void setCookie(const char* name, const char* value, const char* path = "/", const char* domain = nullptr,
                bool secure = false);
+
+// Redirect header policy (when followRedirects is enabled)
+void setRedirectHeaderPolicy(RedirectHeaderPolicy policy);
+void addRedirectSafeHeader(const char* name);
+void clearRedirectSafeHeaders();
 ```
 
 Cookies are captured automatically from `Set-Cookie` responses and replayed on matching hosts/paths; call
-`clearCookies()` to wipe the jar or `setCookie()` to pre-seed entries manually. Keep-alive pooling is off by default;
+`clearCookies()` to wipe the jar or `setCookie()` to pre-seed entries manually.
+
+By default, cookies set without a `Domain=` attribute are treated as **host-only** (sent only to the exact host that
+set them). `Domain=` attributes that would widen scope are ignored unless explicitly allowlisted via
+`setAllowCookieDomainAttribute(true)` + `addAllowedCookieDomain("example.com")`.
+
+Keep-alive pooling is off by default;
 enable it with `setKeepAlive(true, idleMs)` to reuse TCP/TLS connections for the same host/port (respecting server
 `Connection: close` requests).
 
@@ -304,7 +318,8 @@ client.post("http://example.com/login", "user=demo", [](AsyncHttpResponse* respo
 
 - 301/302/303 responses switch to `GET` automatically (body dropped).
 - 307/308 keep the original method and body (stream bodies cannot be replayed automatically).
-- Sensitive headers (`Authorization`, `Proxy-Authorization`) are stripped when the redirect crosses hosts.
+- Cross-origin redirects default to forwarding only a small safe set of headers (e.g. `User-Agent`, `Accept`, etc.).
+  Use `setRedirectHeaderPolicy(...)` and `addRedirectSafeHeader(...)` if you need to forward additional headers.
 - Redirects are triggered as soon as the headers arrive; the client skips downloading any subsequent 3xx body data.
 
 See `examples/arduino/NoStoreToSD/NoStoreToSD.ino` for a full download example using `setNoStoreBody(true)` and a global `onBodyChunk` handler that streams chunked and non-chunked responses to an SD card.
@@ -409,9 +424,11 @@ Highlights / limitations:
 
 `https://` URLs now use the built-in AsyncTCP + mbedTLS transport. Supply trust material before making real requests:
 
-- `client.setTlsCACert(caPem)` — load a PEM CA chain (null-terminated). Mandatory unless using fingerprint pinning or `setTlsInsecure(true)`.
+- `client.setTlsCACert(caPem)` — load a PEM CA chain (null-terminated). Mandatory unless using fingerprint pinning (see `setTlsFingerprint(...)`).
 - `client.setTlsClientCert(certPem, keyPem)` — optional mutual-TLS credentials (PEM).
 - `client.setTlsFingerprint("AA:BB:...")` — 32-byte SHA-256 fingerprint pinning. Validated after the handshake in addition to CA checks.
+- `client.setTlsInsecure(true)` — skips CA validation. By default this is only effective when a fingerprint is configured (pinning).
+  To allow fully insecure TLS (MITM-unsafe) for local debugging, build with `-DASYNC_HTTP_ALLOW_INSECURE_TLS=1`.
 - `client.setTlsInsecure(true)` — disable CA validation (development only; do not ship with this enabled).
 - `client.setTlsHandshakeTimeout(ms)` — default is 12s; tune for slow networks.
 

@@ -9,6 +9,12 @@
     0 // 0 = only set Accept-Encoding header (no inflation). 1 = future: enable minimal gzip inflate.
 #endif
 
+// Security: allow enabling insecure TLS (skips CA validation) only when explicitly opted in at build time.
+// Recommended alternatives: `setTlsCACert(...)` or `setTlsFingerprint(...)` (pinning).
+#ifndef ASYNC_HTTP_ALLOW_INSECURE_TLS
+#define ASYNC_HTTP_ALLOW_INSECURE_TLS 0
+#endif
+
 // Library version (single source of truth inside code). Keep in sync with library.json and library.properties.
 #ifndef ESP_ASYNC_WEB_CLIENT_VERSION
 #define ESP_ASYNC_WEB_CLIENT_VERSION "1.1.4"
@@ -99,9 +105,9 @@ inline bool isValidHttpHeaderName(const String& name) {
         return false;
     for (size_t i = 0; i < name.length(); ++i) {
         unsigned char c = static_cast<unsigned char>(name.charAt(i));
-        bool ok = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '!' ||
-                  c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' || c == '+' || c == '-' ||
-                  c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
+        bool ok = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '!' || c == '#' ||
+                  c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' || c == '+' || c == '-' || c == '.' ||
+                  c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
         if (!ok)
             return false;
     }

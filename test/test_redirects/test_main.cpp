@@ -85,6 +85,53 @@ static void test_redirect_cross_host_preserve_method_strip_auth() {
     cleanupContext(ctx);
 }
 
+static void test_redirect_cross_host_drops_unknown_headers_by_default() {
+    AsyncHttpClient client;
+    client.setFollowRedirects(true, 3);
+    auto ctx = makeRedirectContext(HTTP_METHOD_GET, "http://example.com/a");
+    ctx->request->setHeader("X-Custom-Token", "secret");
+    ctx->request->setHeader("Accept", "application/json");
+
+    ctx->response->setStatusCode(302);
+    ctx->response->setHeader("Location", "http://other.example.com/b");
+
+    AsyncHttpRequest* newReq = nullptr;
+    HttpClientError err = CONNECTION_FAILED;
+    String message;
+    bool decision = client.buildRedirectRequest(ctx, &newReq, &err, &message);
+
+    TEST_ASSERT_TRUE(decision);
+    TEST_ASSERT_NOT_NULL(newReq);
+    TEST_ASSERT_TRUE(newReq->getHeader("X-Custom-Token").isEmpty());
+    TEST_ASSERT_EQUAL_STRING("application/json", newReq->getHeader("Accept").c_str());
+
+    delete newReq;
+    cleanupContext(ctx);
+}
+
+static void test_redirect_cross_host_can_allowlist_header() {
+    AsyncHttpClient client;
+    client.setFollowRedirects(true, 3);
+    client.addRedirectSafeHeader("X-Custom-Token");
+    auto ctx = makeRedirectContext(HTTP_METHOD_GET, "http://example.com/a");
+    ctx->request->setHeader("X-Custom-Token", "secret");
+
+    ctx->response->setStatusCode(302);
+    ctx->response->setHeader("Location", "http://other.example.com/b");
+
+    AsyncHttpRequest* newReq = nullptr;
+    HttpClientError err = CONNECTION_FAILED;
+    String message;
+    bool decision = client.buildRedirectRequest(ctx, &newReq, &err, &message);
+
+    TEST_ASSERT_TRUE(decision);
+    TEST_ASSERT_NOT_NULL(newReq);
+    TEST_ASSERT_EQUAL_STRING("secret", newReq->getHeader("X-Custom-Token").c_str());
+
+    delete newReq;
+    cleanupContext(ctx);
+}
+
 static void test_redirect_too_many_hops() {
     AsyncHttpClient client;
     client.setFollowRedirects(true, 2);
@@ -231,6 +278,8 @@ void setup() {
     UNITY_BEGIN();
     RUN_TEST(test_redirect_same_host_get);
     RUN_TEST(test_redirect_cross_host_preserve_method_strip_auth);
+    RUN_TEST(test_redirect_cross_host_drops_unknown_headers_by_default);
+    RUN_TEST(test_redirect_cross_host_can_allowlist_header);
     RUN_TEST(test_redirect_too_many_hops);
     RUN_TEST(test_redirect_to_https_supported);
     RUN_TEST(test_header_limit_triggers_error);
