@@ -225,7 +225,12 @@ uint32_t AsyncHttpClient::patch(const char* url, const char* data, SuccessCallba
 }
 
 void AsyncHttpClient::setHeader(const char* name, const char* value) {
-    String nameStr(name), valueStr(value);
+    if (!name)
+        return;
+    String nameStr(name);
+    String valueStr(value ? value : "");
+    if (!isValidHttpHeaderName(nameStr) || !isValidHttpHeaderValue(valueStr))
+        return;
     lock();
     for (auto& h : _defaultHeaders) {
         if (h.name.equalsIgnoreCase(nameStr)) {
@@ -264,7 +269,7 @@ void AsyncHttpClient::setTimeout(uint32_t timeout) {
 }
 void AsyncHttpClient::setUserAgent(const char* userAgent) {
     lock();
-    _defaultUserAgent = String(userAgent);
+    _defaultUserAgent = userAgent ? String(userAgent) : String();
     unlock();
 }
 
@@ -362,6 +367,12 @@ void AsyncHttpClient::setCookie(const char* name, const char* value, const char*
                                 bool secure) {
     if (!name || strlen(name) == 0)
         return;
+    if (!isValidHttpHeaderValue(String(name)))
+        return;
+    if (strchr(name, '=') || strchr(name, ';'))
+        return;
+    if (value && !isValidHttpHeaderValue(String(value)))
+        return;
     int64_t now = currentTimeSeconds();
     StoredCookie cookie;
     cookie.name = String(name);
@@ -396,6 +407,11 @@ void AsyncHttpClient::setCookie(const char* name, const char* value, const char*
 
 uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
                                       ErrorCallback onError) {
+    if (!url || strlen(url) == 0) {
+        if (onError)
+            onError(CONNECTION_FAILED, "URL is empty");
+        return 0;
+    }
     // Snapshot global defaults under lock to avoid concurrent modification issues
     std::vector<HttpHeader> headersCopy;
     String uaCopy;
@@ -425,6 +441,17 @@ uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const 
 }
 
 uint32_t AsyncHttpClient::request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError) {
+    if (!request) {
+        if (onError)
+            onError(CONNECTION_FAILED, "Request is null");
+        return 0;
+    }
+    if (request->getHost().length() == 0 || request->getPath().length() == 0) {
+        if (onError)
+            onError(CONNECTION_FAILED, "Invalid URL");
+        delete request;
+        return 0;
+    }
     RequestContext* ctx = new RequestContext();
     ctx->request = request;
     ctx->response = new AsyncHttpResponse();
@@ -605,6 +632,10 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                     context->expectedContentLength > _maxBodySize) {
                     triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                     return;
+                }
+                if (storeBody && context->expectedContentLength > 0 && !context->chunked &&
+                    (!enforceLimit || context->expectedContentLength <= _maxBodySize)) {
+                    context->response->reserveBody(context->expectedContentLength);
                 }
                 context->responseBuffer.remove(0, headerEnd + 4);
                 if (handleRedirect(context))
@@ -846,6 +877,7 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
         if (colonPos != -1) {
             String name = line.substring(0, colonPos);
             String value = line.substring(colonPos + 1);
+            name.trim();
             value.trim();
             context->response->setHeader(name, value);
             if (name.equalsIgnoreCase("Content-Length")) {
@@ -854,9 +886,6 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
                     parsed = 0;
                 context->expectedContentLength = (size_t)parsed;
                 context->response->setContentLength(context->expectedContentLength);
-                bool storeBody = !context->request->getNoStoreBody();
-                if (storeBody)
-                    context->response->reserveBody(context->expectedContentLength);
             } else if (name.equalsIgnoreCase("Transfer-Encoding") && value.equalsIgnoreCase("chunked")) {
                 context->chunked = true;
             } else if (name.equalsIgnoreCase("Connection")) {
@@ -1196,6 +1225,10 @@ void AsyncHttpClient::sendStreamData(RequestContext* context) {
     int written = provider(temp, sizeof(temp), &final);
     if (written < 0) {
         triggerError(context, BODY_STREAM_READ_FAILED, "Body stream read failed");
+        return;
+    }
+    if (written > (int)sizeof(temp)) {
+        triggerError(context, BODY_STREAM_READ_FAILED, "Body stream provider overrun");
         return;
     }
     if (written > 0)
