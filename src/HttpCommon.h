@@ -6,12 +6,18 @@
 // Feature flags (can be overridden before including library headers)
 #ifndef ASYNC_HTTP_ENABLE_GZIP_DECODE
 #define ASYNC_HTTP_ENABLE_GZIP_DECODE                                                                                  \
-    0 // 0 = only set Accept-Encoding header (no inflation). 1 = future: enable minimal gzip inflate.
+    0 // 0 = no gzip inflation. 1 = enable transparent gzip response decoding (Content-Encoding: gzip).
+#endif
+
+// Security: allow enabling insecure TLS (skips CA validation) only when explicitly opted in at build time.
+// Recommended alternatives: `setTlsCACert(...)` or `setTlsFingerprint(...)` (pinning).
+#ifndef ASYNC_HTTP_ALLOW_INSECURE_TLS
+#define ASYNC_HTTP_ALLOW_INSECURE_TLS 0
 #endif
 
 // Library version (single source of truth inside code). Keep in sync with library.json and library.properties.
 #ifndef ESP_ASYNC_WEB_CLIENT_VERSION
-#define ESP_ASYNC_WEB_CLIENT_VERSION "1.1.3"
+#define ESP_ASYNC_WEB_CLIENT_VERSION "1.1.4"
 #endif
 
 struct HttpHeader {
@@ -48,7 +54,8 @@ enum HttpClientError {
     TLS_HANDSHAKE_FAILED = -14,
     TLS_CERT_INVALID = -15,
     TLS_FINGERPRINT_MISMATCH = -16,
-    TLS_HANDSHAKE_TIMEOUT = -17
+    TLS_HANDSHAKE_TIMEOUT = -17,
+    GZIP_DECODE_FAILED = -18
 };
 
 inline const char* httpClientErrorToString(HttpClientError error) {
@@ -87,9 +94,38 @@ inline const char* httpClientErrorToString(HttpClientError error) {
         return "TLS fingerprint mismatch";
     case TLS_HANDSHAKE_TIMEOUT:
         return "TLS handshake timeout";
+    case GZIP_DECODE_FAILED:
+        return "Failed to decode gzip body";
     default:
         return "Network error";
     }
+}
+
+// Basic validation to prevent request-line / header injection when user-provided strings are used.
+// This is intentionally strict: CR/LF and ASCII control characters are rejected.
+inline bool isValidHttpHeaderName(const String& name) {
+    if (name.length() == 0)
+        return false;
+    for (size_t i = 0; i < name.length(); ++i) {
+        unsigned char c = static_cast<unsigned char>(name.charAt(i));
+        bool ok = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '!' || c == '#' ||
+                  c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' || c == '+' || c == '-' || c == '.' ||
+                  c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
+inline bool isValidHttpHeaderValue(const String& value) {
+    for (size_t i = 0; i < value.length(); ++i) {
+        unsigned char c = static_cast<unsigned char>(value.charAt(i));
+        if (c == '\r' || c == '\n' || c == 0x00)
+            return false;
+        if ((c < 0x20 && c != '\t') || c == 0x7F)
+            return false;
+    }
+    return true;
 }
 
 #endif // HTTP_COMMON_H

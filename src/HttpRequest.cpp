@@ -16,6 +16,8 @@ AsyncHttpRequest::AsyncHttpRequest(HttpMethod method, const String& url)
 AsyncHttpRequest::~AsyncHttpRequest() {}
 
 void AsyncHttpRequest::setHeader(const String& name, const String& value) {
+    if (!isValidHttpHeaderName(name) || !isValidHttpHeaderValue(value))
+        return;
     // Check if header already exists and update it
     for (auto& header : _headers) {
         if (header.name.equalsIgnoreCase(name)) {
@@ -137,14 +139,15 @@ void AsyncHttpRequest::addQueryParam(const String& key, const String& value) {
         String out;
         const char* hex = "0123456789ABCDEF";
         for (size_t i = 0; i < in.length(); ++i) {
-            char c = in[i];
+            uint8_t uc = static_cast<uint8_t>(in[i]);
+            char c = static_cast<char>(uc);
             if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
                 c == '.' || c == '~') {
                 out += c;
             } else {
                 out += '%';
-                out += hex[(c >> 4) & 0xF];
-                out += hex[c & 0xF];
+                out += hex[(uc >> 4) & 0xF];
+                out += hex[uc & 0xF];
             }
         }
         return out;
