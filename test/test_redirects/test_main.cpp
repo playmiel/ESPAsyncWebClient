@@ -4,6 +4,7 @@
 
 #define private public
 #include "AsyncHttpClient.h"
+#include "CookieJar.h"
 #include "RedirectHandler.h"
 #undef private
 
@@ -232,7 +233,7 @@ static void test_cookie_roundtrip_basic() {
     TEST_ASSERT_TRUE(client.parseResponseHeaders(ctx, frame));
 
     AsyncHttpRequest follow(HTTP_METHOD_GET, "http://example.com/home");
-    client.applyCookies(&follow);
+    client._cookieJar->applyCookies(&follow);
     TEST_ASSERT_EQUAL_STRING("session=abc123", follow.getHeader("Cookie").c_str());
 
     cleanupContext(ctx);
@@ -248,15 +249,15 @@ static void test_cookie_path_and_secure_rules() {
     TEST_ASSERT_TRUE(client.parseResponseHeaders(ctx, frame));
 
     AsyncHttpRequest wrongPath(HTTP_METHOD_GET, "http://example.com/public");
-    client.applyCookies(&wrongPath);
+    client._cookieJar->applyCookies(&wrongPath);
     TEST_ASSERT_TRUE(wrongPath.getHeader("Cookie").isEmpty());
 
     AsyncHttpRequest insecureTarget(HTTP_METHOD_GET, "http://example.com/admin/dashboard");
-    client.applyCookies(&insecureTarget);
+    client._cookieJar->applyCookies(&insecureTarget);
     TEST_ASSERT_TRUE(insecureTarget.getHeader("Cookie").isEmpty());
 
     AsyncHttpRequest secureTarget(HTTP_METHOD_GET, "https://example.com/admin/dashboard");
-    client.applyCookies(&secureTarget);
+    client._cookieJar->applyCookies(&secureTarget);
     TEST_ASSERT_EQUAL_STRING("admin=1", secureTarget.getHeader("Cookie").c_str());
 
     cleanupContext(ctx);
