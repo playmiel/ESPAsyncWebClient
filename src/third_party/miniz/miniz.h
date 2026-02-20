@@ -18,4 +18,3 @@
 #include "miniz_tinfl.h"
 
 #endif // MINIZ_H
-

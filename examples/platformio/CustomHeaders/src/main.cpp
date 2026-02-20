@@ -45,8 +45,7 @@ void setup() {
     delay(5000); // Wait 5 seconds
 
     // Make another request with additional headers using the advanced API
-    std::unique_ptr<AsyncHttpRequest> customRequest(
-        new AsyncHttpRequest(HTTP_METHOD_POST, "http://httpbin.org/post"));
+    std::unique_ptr<AsyncHttpRequest> customRequest(new AsyncHttpRequest(HTTP_METHOD_POST, "http://httpbin.org/post"));
     customRequest->setHeader("Content-Type", "application/json");
     customRequest->setHeader("X-Custom-Header", "CustomValue123");
     customRequest->setHeader("Accept", "application/json");

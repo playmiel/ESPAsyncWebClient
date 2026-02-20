@@ -7,4 +7,3 @@
 #endif
 
 #endif // MINIZ_EXPORT_H
-
