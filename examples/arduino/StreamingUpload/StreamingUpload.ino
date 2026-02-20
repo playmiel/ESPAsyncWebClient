@@ -47,7 +47,7 @@ void setup() {
     pattern.total = 10 * 1024;
     pattern.sent = 0;
 
-    AsyncHttpRequest* req = new AsyncHttpRequest(HTTP_METHOD_POST, "http://httpbin.org/post");
+    std::unique_ptr<AsyncHttpRequest> req(new AsyncHttpRequest(HTTP_METHOD_POST, "http://httpbin.org/post"));
     req->addQueryParam("mode", "stream");
     req->addQueryParam("unit", "bytes");
     req->finalizeQueryParams();
@@ -61,8 +61,8 @@ void setup() {
     });
     req->setBodyStream(pattern.total, patternProvider);
     client.request(
-        req,
-        [](AsyncHttpResponse* resp) {
+        std::move(req),
+        [](const std::shared_ptr<AsyncHttpResponse>& resp) {
             Serial.printf("UPLOAD DONE status=%d len=%u\n", resp->getStatusCode(), (unsigned)resp->getBody().length());
         },
         [](HttpClientError code, const char* msg) { Serial.printf("ERROR %d: %s\n", (int)code, msg); });

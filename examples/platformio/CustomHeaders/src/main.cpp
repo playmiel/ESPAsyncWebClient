@@ -24,7 +24,7 @@ void setup() {
     // Make a request that will include the custom headers
     client.get(
         "http://httpbin.org/headers",
-        [](AsyncHttpResponse* response) {
+        [](const std::shared_ptr<AsyncHttpResponse>& response) {
             Serial.println("Request with custom headers successful!");
             Serial.printf("Status: %d\n", response->getStatusCode());
 
@@ -45,15 +45,16 @@ void setup() {
     delay(5000); // Wait 5 seconds
 
     // Make another request with additional headers using the advanced API
-    AsyncHttpRequest* customRequest = new AsyncHttpRequest(HTTP_METHOD_POST, "http://httpbin.org/post");
+    std::unique_ptr<AsyncHttpRequest> customRequest(
+        new AsyncHttpRequest(HTTP_METHOD_POST, "http://httpbin.org/post"));
     customRequest->setHeader("Content-Type", "application/json");
     customRequest->setHeader("X-Custom-Header", "CustomValue123");
     customRequest->setHeader("Accept", "application/json");
     customRequest->setBody("{\"message\":\"Hello from ESP32\",\"timestamp\":" + String(millis()) + "}");
 
     client.request(
-        customRequest,
-        [](AsyncHttpResponse* response) {
+        std::move(customRequest),
+        [](const std::shared_ptr<AsyncHttpResponse>& response) {
             Serial.println("\nCustom JSON POST request successful!");
             Serial.printf("Status: %d\n", response->getStatusCode());
             Serial.printf("Content-Type: %s\n", response->getHeader("Content-Type").c_str());

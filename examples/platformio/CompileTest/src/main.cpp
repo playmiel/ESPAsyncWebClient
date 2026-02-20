@@ -61,7 +61,7 @@ void testHttpMethodsCompilation() {
 
 #ifndef COMPILE_TEST_ONLY
     // Test callback signatures compilation
-    auto successCallback = [](AsyncHttpResponse* response) {
+    auto successCallback = [](const std::shared_ptr<AsyncHttpResponse>& response) {
         Serial.printf("Success callback - Status: %d\n", response->getStatusCode());
         Serial.printf("Body length: %d\n", response->getBody().length());
 
@@ -119,7 +119,7 @@ void loop() {
                 Serial.println("Executing one-time HTTP test...");
                 client.get(
                     "http://httpbin.org/get",
-                    [](AsyncHttpResponse* response) {
+                    [](const std::shared_ptr<AsyncHttpResponse>& response) {
                         Serial.printf("✓ GET request successful - Status: %d\n", response->getStatusCode());
                     },
                     [](HttpClientError error, const char* message) {

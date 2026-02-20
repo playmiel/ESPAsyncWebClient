@@ -14,22 +14,22 @@ class AsyncHttpResponse {
     int getStatusCode() const {
         return _statusCode;
     }
-    const String& getStatusText() const {
+    String getStatusText() const {
         return _statusText;
     }
 
     // Response headers
-    const String& getHeader(const String& name) const;
+    String getHeader(const String& name) const;
     const std::vector<HttpHeader>& getHeaders() const {
         return _headers;
     }
-    const String& getTrailer(const String& name) const;
+    String getTrailer(const String& name) const;
     const std::vector<HttpHeader>& getTrailers() const {
         return _trailers;
     }
 
     // Response body
-    const String& getBody() const {
+    String getBody() const {
         return _body;
     }
     size_t getContentLength() const {
@@ -68,7 +68,6 @@ class AsyncHttpResponse {
     std::vector<HttpHeader> _trailers;
     String _body;
     size_t _contentLength;
-    static String _emptyString;
 };
 
 #endif // HTTP_RESPONSE_H

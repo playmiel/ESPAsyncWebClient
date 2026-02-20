@@ -20,7 +20,7 @@ void setup() {
 
     client.post(
         "http://httpbin.org/post", postData.c_str(),
-        [](AsyncHttpResponse* response) {
+        [](const std::shared_ptr<AsyncHttpResponse>& response) {
             Serial.println("POST Success!");
             Serial.printf("Status: %d\n", response->getStatusCode());
             Serial.printf("Content-Type: %s\n", response->getHeader("Content-Type").c_str());

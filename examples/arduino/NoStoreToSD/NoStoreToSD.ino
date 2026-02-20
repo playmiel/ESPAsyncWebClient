@@ -31,12 +31,12 @@ static bool beginDownload(const char* url, const char* destinationPath) {
 
     currentPath = destinationPath;
 
-    AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_METHOD_GET, url);
+    std::unique_ptr<AsyncHttpRequest> request(new AsyncHttpRequest(HTTP_METHOD_GET, url));
     request->setNoStoreBody(true); // only stream via onBodyChunk
 
     uint32_t id = client.request(
-        request,
-        [](AsyncHttpResponse* response) {
+        std::move(request),
+        [](const std::shared_ptr<AsyncHttpResponse>& response) {
             Serial.printf("Download complete (%d). Reported length: %u\r\n", response->getStatusCode(),
                           static_cast<unsigned int>(response->getContentLength()));
             if (!plainQueued) {

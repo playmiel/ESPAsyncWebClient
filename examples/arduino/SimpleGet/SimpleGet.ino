@@ -16,7 +16,7 @@ void setup() {
 
     client.get(
         "http://httpbin.org/get",
-        [](AsyncHttpResponse* response) {
+        [](const std::shared_ptr<AsyncHttpResponse>& response) {
             Serial.println("Success!");
             Serial.printf("Status: %d\n", response->getStatusCode());
             Serial.printf("Body: %s\n", response->getBody().c_str());

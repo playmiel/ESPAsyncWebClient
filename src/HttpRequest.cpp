@@ -1,7 +1,15 @@
 #include "HttpRequest.h"
 #include "UrlParser.h"
+#include <cstring>
 
-String AsyncHttpRequest::_emptyString = "";
+static size_t decimalLength(size_t value) {
+    size_t len = 1;
+    while (value >= 10) {
+        value /= 10;
+        ++len;
+    }
+    return len;
+}
 
 AsyncHttpRequest::AsyncHttpRequest(HttpMethod method, const String& url)
     : _method(method), _url(url), _port(80), _secure(false), _timeout(10000) {
@@ -18,19 +26,23 @@ AsyncHttpRequest::~AsyncHttpRequest() {}
 void AsyncHttpRequest::setHeader(const String& name, const String& value) {
     if (!isValidHttpHeaderName(name) || !isValidHttpHeaderValue(value))
         return;
+    String lowerName = name;
+    lowerName.toLowerCase();
     // Check if header already exists and update it
     for (auto& header : _headers) {
-        if (header.name.equalsIgnoreCase(name)) {
+        if (header.name == lowerName) {
             header.value = value;
             return;
         }
     }
-    _headers.push_back(HttpHeader(name, value));
+    _headers.push_back(HttpHeader(lowerName, value));
 }
 
 void AsyncHttpRequest::removeHeader(const String& name) {
+    String lowerName = name;
+    lowerName.toLowerCase();
     for (auto it = _headers.begin(); it != _headers.end();) {
-        if (it->name.equalsIgnoreCase(name)) {
+        if (it->name == lowerName) {
             it = _headers.erase(it);
         } else {
             ++it;
@@ -38,51 +50,68 @@ void AsyncHttpRequest::removeHeader(const String& name) {
     }
 }
 
-const String& AsyncHttpRequest::getHeader(const String& name) const {
+String AsyncHttpRequest::getHeader(const String& name) const {
+    String lowerName = name;
+    lowerName.toLowerCase();
     for (const auto& header : _headers) {
-        if (header.name.equalsIgnoreCase(name)) {
+        if (header.name == lowerName) {
             return header.value;
         }
     }
-    return _emptyString;
+    return String();
 }
 
 String AsyncHttpRequest::buildHttpRequest() const {
-    String request = methodToString() + " " + _path + " HTTP/1.1\r\n";
-    request += "Host: " + _host + "\r\n";
-
-    // Add all headers
-    for (const auto& header : _headers) {
-        request += header.name + ": " + header.value + "\r\n";
-    }
-
-    // Add content length if we have a full (non-streamed) body
-    if (!_body.isEmpty()) {
-        request += "Content-Length: " + String(_body.length()) + "\r\n";
-    } else if (_bodyProvider != nullptr) {
-        request += "Content-Length: " + String(_streamLength) + "\r\n"; // caller must provide accurate length
-    }
-
-    request += "\r\n";
-
-    // Add body if present
+    size_t bodyLen = _body.length();
+    String request = buildAllHeaders(bodyLen);
     if (!_body.isEmpty()) {
         request += _body;
     } // stream body is written later by client using buildHeadersOnly
-
     return request;
 }
 
 String AsyncHttpRequest::buildHeadersOnly() const {
-    String req = methodToString() + " " + _path + " HTTP/1.1\r\n";
-    req += "Host: " + _host + "\r\n";
+    return buildAllHeaders(0);
+}
+
+String AsyncHttpRequest::buildAllHeaders(size_t extraReserve) const {
+    const char* method = methodToString();
+    size_t headerLen = 0;
+    headerLen += strlen(method) + 1 + _path.length() + strlen(" HTTP/1.1\r\n");
+    headerLen += strlen("Host: ") + _host.length() + strlen("\r\n");
     for (const auto& header : _headers) {
-        req += header.name + ": " + header.value + "\r\n";
+        headerLen += header.name.length() + 2 + header.value.length() + 2;
     }
     if (_bodyProvider != nullptr) {
-        req += "Content-Length: " + String(_streamLength) + "\r\n";
+        headerLen += strlen("Content-Length: ") + decimalLength(_streamLength) + 2;
     } else if (!_body.isEmpty()) {
-        req += "Content-Length: " + String(_body.length()) + "\r\n";
+        headerLen += strlen("Content-Length: ") + decimalLength(_body.length()) + 2;
+    }
+    headerLen += 2;
+
+    String req;
+    req.reserve(headerLen + extraReserve);
+    req += method;
+    req += ' ';
+    req += _path;
+    req += " HTTP/1.1\r\n";
+    req += "Host: ";
+    req += _host;
+    req += "\r\n";
+    for (const auto& header : _headers) {
+        req += header.name;
+        req += ": ";
+        req += header.value;
+        req += "\r\n";
+    }
+    if (_bodyProvider != nullptr) {
+        req += "Content-Length: ";
+        req += String(_streamLength); // caller must provide accurate length
+        req += "\r\n";
+    } else if (!_body.isEmpty()) {
+        req += "Content-Length: ";
+        req += String(_body.length());
+        req += "\r\n";
     }
     req += "\r\n";
     return req;
@@ -101,7 +130,7 @@ bool AsyncHttpRequest::parseUrl(const String& url) {
     return true;
 }
 
-String AsyncHttpRequest::methodToString() const {
+const char* AsyncHttpRequest::methodToString() const {
     switch (_method) {
     case HTTP_METHOD_GET:
         return "GET";

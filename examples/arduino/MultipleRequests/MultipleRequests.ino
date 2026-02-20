@@ -6,7 +6,7 @@ AsyncHttpClient client;
 int requestCount = 0;
 int responseCount = 0;
 
-void onResponse(AsyncHttpResponse* response, const String& requestName) {
+void onResponse(const std::shared_ptr<AsyncHttpResponse>& response, const String& requestName) {
     responseCount++;
     Serial.printf("[%s] Response %d received!\n", requestName.c_str(), responseCount);
     Serial.printf("[%s] Status: %d %s\n", requestName.c_str(), response->getStatusCode(),
@@ -30,12 +30,14 @@ void setup() {
 
     requestCount++;
     client.get(
-        "http://httpbin.org/get", [](AsyncHttpResponse* response) { onResponse(response, "GET"); },
+        "http://httpbin.org/get",
+        [](const std::shared_ptr<AsyncHttpResponse>& response) { onResponse(response, "GET"); },
         [](HttpClientError error, const char* message) { onError(error, message, "GET"); });
 
     requestCount++;
     client.post(
-        "http://httpbin.org/post", "data=test", [](AsyncHttpResponse* response) { onResponse(response, "POST"); },
+        "http://httpbin.org/post", "data=test",
+        [](const std::shared_ptr<AsyncHttpResponse>& response) { onResponse(response, "POST"); },
         [](HttpClientError error, const char* message) { onError(error, message, "POST"); });
 }
 

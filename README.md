@@ -70,7 +70,7 @@ void setup() {
     
     // Make a simple GET request
     client.get("http://httpbin.org/get", 
-        [](AsyncHttpResponse* response) {
+        [](std::shared_ptr<AsyncHttpResponse> response) {
             Serial.printf("Success! Status: %d\n", response->getStatusCode());
             Serial.printf("Body: %s\n", response->getBody().c_str());
         },
@@ -101,6 +101,23 @@ On ESP32, if AsyncTCP lacks native timeout support, you have two options:
 If `ASYNC_TCP_HAS_TIMEOUT` is available in your AsyncTCP, neither is required for timeouts, but calling
 `client.loop()` remains harmless.
 
+## Migration v1 → v2
+
+- `SuccessCallback` now receives `std::shared_ptr<AsyncHttpResponse>`.
+- `request()` now takes `std::unique_ptr<AsyncHttpRequest>` and assumes ownership.
+- `getBody()`, `getHeader()`, and `getStatusText()` return `String` by value.
+- `HttpHeader` names are normalized to lowercase.
+- Legacy void-return helpers (`*_legacy`, `ASYNC_HTTP_LEGACY_VOID_API`) were removed.
+- `parseChunkSizeLine()` is now private.
+- `BodyChunkCallback` data is only valid during the callback; copy if needed.
+
+Example migration for advanced requests:
+
+```cpp
+std::unique_ptr<AsyncHttpRequest> request(new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com"));
+client.request(std::move(request), onSuccess, onError);
+```
+
 ## API Reference
 
 ### AsyncHttpClient Class
@@ -109,13 +126,13 @@ If `ASYNC_TCP_HAS_TIMEOUT` is available in your AsyncTCP, neither is required fo
 
 ```cpp
 // GET request
-void get(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+uint32_t get(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
 // POST request with data
-void post(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+uint32_t post(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
 // PUT request with data
-void put(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+uint32_t put(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
 // DELETE request
 uint32_t del(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
@@ -127,7 +144,7 @@ uint32_t head(const char* url, SuccessCallback onSuccess, ErrorCallback onError 
 uint32_t patch(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
 // Advanced request (custom method, headers, streaming, etc.)
-uint32_t request(AsyncHttpRequest* request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
+uint32_t request(std::unique_ptr<AsyncHttpRequest> request, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
 // Abort a request by its ID
 bool abort(uint32_t requestId);
@@ -193,7 +210,7 @@ enable it with `setKeepAlive(true, idleMs)` to reuse TCP/TLS connections for the
 #### Callback Types
 
 ```cpp
-typedef std::function<void(AsyncHttpResponse*)> SuccessCallback;
+typedef std::function<void(std::shared_ptr<AsyncHttpResponse>)> SuccessCallback;
 typedef std::function<void(HttpClientError, const char*)> ErrorCallback;
 ```
 
@@ -202,16 +219,16 @@ typedef std::function<void(HttpClientError, const char*)> ErrorCallback;
 ```cpp
 // Response status
 int getStatusCode() const;
-const String& getStatusText() const;
+String getStatusText() const;
 
 // Response headers
-const String& getHeader(const String& name) const;
+String getHeader(const String& name) const;
 const std::vector<HttpHeader>& getHeaders() const;
-const String& getTrailer(const String& name) const;
+String getTrailer(const String& name) const;
 const std::vector<HttpHeader>& getTrailers() const;
 
 // Response body
-const String& getBody() const;
+String getBody() const;
 size_t getContentLength() const;
 
 // Status helpers
@@ -223,7 +240,7 @@ bool isError() const;      // 4xx+ status codes
 Example of reading decoded chunk trailers:
 
 ```cpp
-client.get("http://example.com/chunked", [](AsyncHttpResponse* response) {
+client.get("http://example.com/chunked", [](std::shared_ptr<AsyncHttpResponse> response) {
     for (const auto& trailer : response->getTrailers()) {
         Serial.printf("Trailer %s: %s\n", trailer.name.c_str(), trailer.value.c_str());
     }
@@ -234,21 +251,21 @@ client.get("http://example.com/chunked", [](AsyncHttpResponse* response) {
 
 ```cpp
 // Create custom request
-AsyncHttpRequest request(HTTP_METHOD_POST, "http://example.com/api");
+std::unique_ptr<AsyncHttpRequest> request(new AsyncHttpRequest(HTTP_METHOD_POST, "http://example.com/api"));
 
 // Set headers
-request.setHeader("Content-Type", "application/json");
-request.setHeader("Authorization", "Bearer token");
-request.removeHeader("Accept-Encoding");
+request->setHeader("Content-Type", "application/json");
+request->setHeader("Authorization", "Bearer token");
+request->removeHeader("Accept-Encoding");
 
 // Set body
-request.setBody("{\"key\":\"value\"}");
+request->setBody("{\"key\":\"value\"}");
 
 // Set timeout
-request.setTimeout(10000);
+request->setTimeout(10000);
 
 // Execute
-client.request(&request, onSuccess, onError);
+client.request(std::move(request), onSuccess, onError);
 ```
 
 HTTP method enums are now prefixed (`HTTP_METHOD_GET`, `HTTP_METHOD_POST`, etc.) to avoid collisions with
@@ -262,7 +279,7 @@ including `ESPAsyncWebServer.h` in the same translation unit).
 
 ```cpp
 client.get("http://api.example.com/data", 
-    [](AsyncHttpResponse* response) {
+    [](std::shared_ptr<AsyncHttpResponse> response) {
         if (response->isSuccess()) {
             Serial.println("Data received:");
             Serial.println(response->getBody());
@@ -278,7 +295,7 @@ client.setHeader("Content-Type", "application/json");
 String jsonData = "{\"sensor\":\"temperature\",\"value\":25.5}";
 
 client.post("http://api.example.com/sensor", jsonData.c_str(),
-    [](AsyncHttpResponse* response) {
+    [](std::shared_ptr<AsyncHttpResponse> response) {
         Serial.printf("Posted data, status: %d\n", response->getStatusCode());
     }
 );
@@ -301,9 +318,9 @@ client.setHeader("X-API-Key", "your-api-key");
 client.setUserAgent("MyDevice/1.0");
 
 // Or set per-request headers
-AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com");
+std::unique_ptr<AsyncHttpRequest> request(new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com"));
 request->setHeader("Authorization", "Bearer token");
-client.request(request, onSuccess);
+client.request(std::move(request), onSuccess);
 ```
 
 ### Following Redirects
@@ -311,7 +328,7 @@ client.request(request, onSuccess);
 ```cpp
 client.setFollowRedirects(true, 3); // follow at most 3 hops
 
-client.post("http://example.com/login", "user=demo", [](AsyncHttpResponse* response) {
+client.post("http://example.com/login", "user=demo", [](std::shared_ptr<AsyncHttpResponse> response) {
     Serial.printf("Final location responded with %d\n", response->getStatusCode());
 });
 ```
@@ -364,7 +381,7 @@ client.setHeader("Accept", "application/json");
 ### Per-Request Settings
 
 ```cpp
-AsyncHttpRequest* request = new AsyncHttpRequest(HTTP_METHOD_POST, url);
+std::unique_ptr<AsyncHttpRequest> request(new AsyncHttpRequest(HTTP_METHOD_POST, url));
 request->setTimeout(30000);  // 30 second timeout for this request
 request->setHeader("Content-Type", "application/xml");
 request->setBody(xmlData);
@@ -373,11 +390,11 @@ request->setBody(xmlData);
 ## Memory Management
 
 - The library automatically manages memory for standard requests
-- For advanced `AsyncHttpRequest` objects, the library takes ownership and will delete them
-- Response objects are automatically cleaned up after callbacks complete
+- For advanced requests, pass a `std::unique_ptr<AsyncHttpRequest>` to `request()`; ownership transfers to the client
+- Success callbacks receive a `std::shared_ptr<AsyncHttpResponse>`; keep a copy if you need the response after the callback
 - No manual memory management required for typical usage
 
-> IMPORTANT: The `AsyncHttpResponse*` pointer passed to the success callback is ONLY valid during that callback. Do not store it or references to its internal `String` objects. Copy what you need.
+> IMPORTANT: Body chunk data is only valid during `onBodyChunk(...)`. Copy it if you need to keep it.
 
 ### Body Streaming (experimental)
 
@@ -397,6 +414,7 @@ Parameters:
 Notes:
 
 - Invoked for every segment (chunk or contiguous data block)
+- `data` is only valid during the callback; copy it if you need to retain it
 - Unless `req->setNoStoreBody(true)` is enabled, the full body is still accumulated internally
 - `final` is invoked just before the success callback
 - Keep it lightweight (avoid blocking operations)
@@ -466,19 +484,19 @@ Common HTTPS errors:
 - Chunked: trailers parsed and attached to `AsyncHttpResponse::getTrailers()`
 - Full in-memory buffering (guard with `setMaxBodySize` or use no-store + chunk callback)
 - Redirects disabled by default; opt-in via `client.setFollowRedirects(...)`
-- No long-lived keep-alive: default header `Connection: close`; no connection reuse currently.
+- Keep-alive pooling is disabled by default; enable it with `setKeepAlive(true, idleMs)`.
 - Manual timeout loop required if AsyncTCP version lacks `setTimeout` (call `client.loop()` in `loop()`).
 - No general content-encoding handling (br/deflate not supported); optional `gzip` decode is available via `ASYNC_HTTP_ENABLE_GZIP_DECODE`.
 
 ## Object lifecycle / Ownership
 
 1. `AsyncHttpClient::makeRequest()` creates a dynamic `AsyncHttpRequest` (or you pass yours to `request()`).
-2. `request()` allocates a `RequestContext`, an `AsyncHttpResponse` and an `AsyncClient`.
+2. `request()` allocates a `RequestContext`, an `AsyncHttpResponse` and an `AsyncTransport`.
 3. Once connected the fully built HTTP request is written (`buildHttpRequest()`).
 4. Reception: headers buffered until `\r\n\r\n`, then body accumulation (or chunk decoding).
-5. On complete success: success callback invoked with `AsyncHttpResponse*` (valid only during the callback).
-6. On error or after success callback returns: `cleanup()` deletes `AsyncClient`, `AsyncHttpRequest`, `AsyncHttpResponse`, `RequestContext`.
-7. Do **not** keep any pointer/reference after callback return (it will dangle).
+5. On complete success: success callback invoked with `std::shared_ptr<AsyncHttpResponse>`.
+6. On error or after success callback returns: `cleanup()` deletes the transport, `AsyncHttpRequest`, and `RequestContext`.
+7. The response is freed when the last `shared_ptr` copy is released.
 
 For very large bodies or future streaming options, a hook would be placed inside `handleData` after `headersComplete` before `appendBody`.
 
@@ -512,7 +530,7 @@ Example mapping in a callback:
 
 ```cpp
 client.get("http://example.com", 
-  [](AsyncHttpResponse* r) {
+  [](std::shared_ptr<AsyncHttpResponse> r) {
       Serial.printf("OK %d %s\n", r->getStatusCode(), r->getStatusText().c_str());
   },
         [](HttpClientError e, const char* msg) {
