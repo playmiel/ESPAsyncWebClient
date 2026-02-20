@@ -914,8 +914,9 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
         if (_connectionPool) {
             recycle = _connectionPool->shouldRecycleTransport(
                 context->request.get(), context->response, context->transport, context->responseProcessed,
-                context->requestKeepAlive, context->serverRequestedClose, context->chunk.chunked, context->chunk.chunkedComplete,
-                context->expectedContentLength, context->receivedContentLength, _keepAliveEnabled);
+                context->requestKeepAlive, context->serverRequestedClose, context->chunk.chunked,
+                context->chunk.chunkedComplete, context->expectedContentLength, context->receivedContentLength,
+                _keepAliveEnabled);
         }
         if (recycle && _connectionPool) {
             _connectionPool->releaseConnectionToPool(context->transport, context->request.get(),
@@ -948,7 +949,6 @@ void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError erro
         context->onError(errorCode, errorMessage);
     cleanup(context);
 }
-
 
 void AsyncHttpClient::loop() {
     uint32_t now = millis();
@@ -1086,7 +1086,6 @@ AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* req
     sanitize(&cfg);
     return cfg;
 }
-
 
 AsyncTransport* AsyncHttpClient::buildTransport(RequestContext* context) {
     if (!context || !context->request)

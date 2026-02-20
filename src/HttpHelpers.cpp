@@ -37,8 +37,7 @@ int64_t currentTimeSeconds() {
 }
 
 int monthFromAbbrev(const char* mon) {
-    static const char* kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    static const char* kMonths[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     if (!mon || strlen(mon) < 3)
         return -1;
     for (int i = 0; i < 12; ++i) {
@@ -93,8 +92,7 @@ bool parseHttpDate(const String& value, int64_t* outEpoch) {
     int day = 0, year = 0, hour = 0, minute = 0, second = 0;
     char monthBuf[4] = {0};
     char tzBuf[4] = {0};
-    int matched = sscanf(date.c_str(), "%d %3s %d %d:%d:%d %3s", &day, monthBuf, &year, &hour, &minute, &second,
-                         tzBuf);
+    int matched = sscanf(date.c_str(), "%d %3s %d %d:%d:%d %3s", &day, monthBuf, &year, &hour, &minute, &second, tzBuf);
     if (matched < 6)
         return false;
     if (matched == 6)

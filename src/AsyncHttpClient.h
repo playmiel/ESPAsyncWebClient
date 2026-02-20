@@ -55,7 +55,6 @@ class AsyncHttpClient {
     uint32_t head(const char* url, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
     uint32_t patch(const char* url, const char* data, SuccessCallback onSuccess, ErrorCallback onError = nullptr);
 
-
     // Configuration methods
     void setHeader(const char* name, const char* value);
     void removeHeader(const char* name);
