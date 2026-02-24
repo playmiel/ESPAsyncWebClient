@@ -67,7 +67,7 @@ class AsyncHttpRequest {
     // Headers management
     void setHeader(const String& name, const String& value);
     void removeHeader(const String& name);
-    const String& getHeader(const String& name) const;
+    String getHeader(const String& name) const;
     const std::vector<HttpHeader>& getHeaders() const {
         return _headers;
     }
@@ -76,7 +76,7 @@ class AsyncHttpRequest {
     void setBody(const String& body) {
         _body = body;
     }
-    const String& getBody() const {
+    String getBody() const {
         return _body;
     }
     bool hasBody() const {
@@ -158,13 +158,13 @@ class AsyncHttpRequest {
     size_t _streamLength = 0;
     BodyStreamProvider _bodyProvider = nullptr;
     uint32_t _timeout;
-    static String _emptyString;
     bool _queryFinalized = true;
     bool _acceptGzip = false;
     bool _noStoreBody = false;
     std::unique_ptr<AsyncHttpTLSConfig> _tlsConfig;
 
-    String methodToString() const;
+    String buildAllHeaders(size_t extraReserve) const;
+    const char* methodToString() const;
 };
 
 #endif // HTTP_REQUEST_H

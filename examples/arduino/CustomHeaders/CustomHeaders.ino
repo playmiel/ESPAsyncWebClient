@@ -21,7 +21,7 @@ void setup() {
 
     client.get(
         "http://httpbin.org/headers",
-        [](AsyncHttpResponse* response) {
+        [](const std::shared_ptr<AsyncHttpResponse>& response) {
             Serial.println("Request with custom headers successful!");
             Serial.printf("Status: %d\n", response->getStatusCode());
         },

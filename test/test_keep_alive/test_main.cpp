@@ -3,6 +3,7 @@
 
 #define private public
 #include "AsyncHttpClient.h"
+#include "ConnectionPool.h"
 #undef private
 
 class MockTransport : public AsyncTransport {
@@ -77,20 +78,20 @@ static void test_pools_connection_on_complete_body() {
     client.setKeepAlive(true, 3000);
 
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
+    ctx->request.reset(new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/"));
     ctx->requestKeepAlive = true;
     ctx->resolvedTlsConfig = client.getDefaultTlsConfig();
     ctx->transport = new MockTransport(false);
-    ctx->response = new AsyncHttpResponse();
+    ctx->response = std::make_shared<AsyncHttpResponse>();
 
     String headers = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
     TEST_ASSERT_TRUE(client.parseResponseHeaders(ctx, headers));
     ctx->headersComplete = true;
     client.processResponse(ctx);
 
-    TEST_ASSERT_EQUAL(1, (int)client._idleConnections.size());
-    TEST_ASSERT_EQUAL_STRING("example.com", client._idleConnections[0].host.c_str());
-    TEST_ASSERT_EQUAL(80, client._idleConnections[0].port);
+    TEST_ASSERT_EQUAL(1, (int)client._connectionPool->_idleConnections.size());
+    TEST_ASSERT_EQUAL_STRING("example.com", client._connectionPool->_idleConnections[0].host.c_str());
+    TEST_ASSERT_EQUAL(80, client._connectionPool->_idleConnections[0].port);
 }
 
 static bool gErrorCalled = false;
@@ -103,11 +104,11 @@ static void test_does_not_pool_on_truncated_body() {
     client.setKeepAlive(true, 3000);
 
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
+    ctx->request.reset(new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/"));
     ctx->requestKeepAlive = true;
     ctx->resolvedTlsConfig = client.getDefaultTlsConfig();
     ctx->transport = new MockTransport(false);
-    ctx->response = new AsyncHttpResponse();
+    ctx->response = std::make_shared<AsyncHttpResponse>();
     ctx->onError = [](HttpClientError err, const char* msg) {
         (void)msg;
         gErrorCalled = true;
@@ -122,7 +123,7 @@ static void test_does_not_pool_on_truncated_body() {
 
     TEST_ASSERT_TRUE(gErrorCalled);
     TEST_ASSERT_EQUAL(CONNECTION_CLOSED_MID_BODY, gLastError);
-    TEST_ASSERT_EQUAL(0, (int)client._idleConnections.size());
+    TEST_ASSERT_EQUAL(0, (int)client._connectionPool->_idleConnections.size());
 }
 
 static void test_reuses_pooled_connection() {
@@ -131,24 +132,26 @@ static void test_reuses_pooled_connection() {
 
     // Seed pool with one connection
     auto poolCtx = new AsyncHttpClient::RequestContext();
-    poolCtx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
+    poolCtx->request.reset(new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/"));
     poolCtx->requestKeepAlive = true;
     poolCtx->resolvedTlsConfig = client.getDefaultTlsConfig();
     poolCtx->transport = new MockTransport(false);
-    poolCtx->response = new AsyncHttpResponse();
+    poolCtx->response = std::make_shared<AsyncHttpResponse>();
     poolCtx->headersComplete = true;
     poolCtx->responseProcessed = true;
     poolCtx->response->setStatusCode(200);
     client.cleanup(poolCtx);
 
-    TEST_ASSERT_EQUAL(1, (int)client._idleConnections.size());
-    MockTransport* pooled = static_cast<MockTransport*>(client._idleConnections[0].transport);
+    TEST_ASSERT_EQUAL(1, (int)client._connectionPool->_idleConnections.size());
+    MockTransport* pooled = static_cast<MockTransport*>(client._connectionPool->_idleConnections[0].transport);
 
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/");
+    ctx->request.reset(new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/"));
     ctx->request->setHeader("Connection", "keep-alive");
-    ctx->response = new AsyncHttpResponse();
-    ctx->onSuccess = [](AsyncHttpResponse* resp) { TEST_ASSERT_EQUAL(200, resp->getStatusCode()); };
+    ctx->response = std::make_shared<AsyncHttpResponse>();
+    ctx->onSuccess = [](const std::shared_ptr<AsyncHttpResponse>& resp) {
+        TEST_ASSERT_EQUAL(200, resp->getStatusCode());
+    };
 
     client.executeRequest(ctx);
     TEST_ASSERT_TRUE(ctx->usingPooledConnection);
@@ -157,7 +160,7 @@ static void test_reuses_pooled_connection() {
     const char* frame = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: keep-alive\r\n\r\nTEST";
     client.handleData(ctx, const_cast<char*>(frame), strlen(frame));
 
-    TEST_ASSERT_EQUAL(1, (int)client._idleConnections.size());
+    TEST_ASSERT_EQUAL(1, (int)client._connectionPool->_idleConnections.size());
     TEST_ASSERT_FALSE(pooled->closed());
 }
 

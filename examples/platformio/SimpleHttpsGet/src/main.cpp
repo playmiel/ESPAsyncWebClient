@@ -50,7 +50,7 @@ void setup() {
     // HTTPS GET request
     client.get(
         TEST_URL,
-        [](AsyncHttpResponse* response) {
+        [](const std::shared_ptr<AsyncHttpResponse>& response) {
             Serial.printf("Success! Status: %d %s\n", response->getStatusCode(), response->getStatusText().c_str());
             Serial.println("Body:");
             Serial.println(response->getBody());

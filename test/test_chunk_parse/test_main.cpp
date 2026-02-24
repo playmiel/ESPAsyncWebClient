@@ -26,8 +26,10 @@ static void resetState() {
 }
 
 static String trailerValue(const char* name) {
+    String lower = name;
+    lower.toLowerCase();
     for (const auto& trailer : gLastTrailers) {
-        if (trailer.name.equalsIgnoreCase(name)) {
+        if (trailer.name == lower) {
             return trailer.value;
         }
     }
@@ -36,10 +38,10 @@ static String trailerValue(const char* name) {
 
 static AsyncHttpClient::RequestContext* makeContext(AsyncHttpClient& client) {
     auto ctx = new AsyncHttpClient::RequestContext();
-    ctx->request = new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/res");
-    ctx->response = new AsyncHttpResponse();
+    ctx->request.reset(new AsyncHttpRequest(HTTP_METHOD_GET, "http://example.com/res"));
+    ctx->response = std::make_shared<AsyncHttpResponse>();
     ctx->transport = nullptr;
-    ctx->onSuccess = [](AsyncHttpResponse* resp) {
+    ctx->onSuccess = [](const std::shared_ptr<AsyncHttpResponse>& resp) {
         gSuccessCalled = true;
         gLastBody = resp->getBody();
         gLastTrailers = resp->getTrailers();
@@ -58,7 +60,7 @@ static void test_chunk_trailers_are_parsed() {
     auto ctx = makeContext(client);
 
     ctx->headersComplete = true;
-    ctx->chunked = true;
+    ctx->chunk.chunked = true;
 
     auto feed = [&](const char* data) { client.handleData(ctx, const_cast<char*>(data), strlen(data)); };
 
@@ -85,7 +87,7 @@ static void test_chunk_missing_crlf_is_error() {
     auto ctx = makeContext(client);
 
     ctx->headersComplete = true;
-    ctx->chunked = true;
+    ctx->chunk.chunked = true;
 
     auto feed = [&](const char* data) { client.handleData(ctx, const_cast<char*>(data), strlen(data)); };
 
@@ -130,7 +132,7 @@ static void test_chunk_body_limit_ignored_for_no_store_streaming() {
     });
     auto ctx = makeContext(client);
     ctx->headersComplete = true;
-    ctx->chunked = true;
+    ctx->chunk.chunked = true;
     ctx->request->setNoStoreBody(true);
 
     auto feed = [&](const char* data) { client.handleData(ctx, const_cast<char*>(data), strlen(data)); };

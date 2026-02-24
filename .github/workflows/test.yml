@@ -19,7 +19,7 @@ jobs:
         platform: [esp32dev]
         include:
           - platform: esp32dev
-            async-tcp-repo: "https://github.com/ESP32Async/AsyncTCP.git"
+            async-tcp-repo: "ESP32Async/AsyncTCP @ ^3.4.8"
             test-name: "latest"
     
     steps:
@@ -178,7 +178,7 @@ jobs:
         framework = arduino
         $PLATFORM_PACKAGES
         lib_deps = 
-            https://github.com/ESP32Async/AsyncTCP.git
+            ESP32Async/AsyncTCP @ ^3.4.8
             bblanchon/ArduinoJson@^6.21.0
         EOF
         
