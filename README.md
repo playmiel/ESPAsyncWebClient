@@ -36,7 +36,7 @@ Add to your `platformio.ini`:
 
 ```ini
 lib_deps = 
-    https://github.com/ESP32Async/AsyncTCP.git
+    ESP32Async/ESPAsyncWebServer @ 3.10.0
     https://github.com/playmiel/ESPAsyncWebClient.git
 platform_packages =
     framework-arduinoespressif32@^3

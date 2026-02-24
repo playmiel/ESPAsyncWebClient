@@ -120,7 +120,7 @@ jobs:
         platform = espressif32
         board = esp32dev
         lib_deps = 
-            https://github.com/ESP32Async/AsyncTCP.git
+            ESP32Async/ESPAsyncWebServer @ 3.10.0
             bblanchon/ArduinoJson@^6.21.0
         EOF
         

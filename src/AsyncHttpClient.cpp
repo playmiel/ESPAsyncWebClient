@@ -395,6 +395,7 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     if (_cookieJar)
         _cookieJar->applyCookies(context->request.get());
     context->timing.connectStartMs = millis();
+    context->timing.connectTimeoutMs = _defaultConnectTimeout;
     context->resolvedTlsConfig = resolveTlsConfig(context->request.get());
     String connHeader = context->request->getHeader("Connection");
     context->requestKeepAlive = _keepAliveEnabled && !equalsIgnoreCase(connHeader, "close");

@@ -56,7 +56,7 @@ AsyncTransport* ConnectionPool::checkoutPooledTransport(const AsyncHttpRequest* 
         }
         if (removeEntry) {
             AsyncTransport* toDelete = it->transport;
-            _idleConnections.erase(it);
+            it = _idleConnections.erase(it);
             if (toDelete) {
                 toDelete->close(true);
                 delete toDelete;
