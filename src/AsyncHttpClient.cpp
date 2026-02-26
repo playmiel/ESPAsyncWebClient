@@ -442,28 +442,32 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->transport->setConnectHandler(
         [this, ctxShared](void* /*arg*/, AsyncTransport* t) {
             (void)t;
-            if (ctxShared->cancelled.load()) return;
+            if (ctxShared->cancelled.load())
+                return;
             handleConnect(ctxShared.get());
         },
         nullptr);
     context->transport->setDataHandler(
         [this, ctxShared](void* /*arg*/, AsyncTransport* t, void* data, size_t len) {
             (void)t;
-            if (ctxShared->cancelled.load()) return;
+            if (ctxShared->cancelled.load())
+                return;
             handleData(ctxShared.get(), static_cast<char*>(data), len);
         },
         nullptr);
     context->transport->setDisconnectHandler(
         [this, ctxShared](void* /*arg*/, AsyncTransport* t) {
             (void)t;
-            if (ctxShared->cancelled.load()) return;
+            if (ctxShared->cancelled.load())
+                return;
             handleDisconnect(ctxShared.get());
         },
         nullptr);
     context->transport->setErrorHandler(
         [this, ctxShared](void* /*arg*/, AsyncTransport* t, HttpClientError error, const char* message) {
             (void)t;
-            if (ctxShared->cancelled.load()) return;
+            if (ctxShared->cancelled.load())
+                return;
             handleTransportError(ctxShared.get(), error, message);
         },
         nullptr);
@@ -474,7 +478,8 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
         [this, ctxShared](void* /*arg*/, AsyncTransport* transport, uint32_t t) {
             (void)transport;
             (void)t;
-            if (ctxShared->cancelled.load()) return;
+            if (ctxShared->cancelled.load())
+                return;
             triggerError(ctxShared.get(), REQUEST_TIMEOUT, "Request timeout");
         },
         nullptr);
