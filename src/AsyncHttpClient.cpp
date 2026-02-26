@@ -307,7 +307,22 @@ uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const 
     }
     if (data) {
         request->setBody(String(data));
-        request->setHeader("Content-Type", "application/x-www-form-urlencoded");
+        // Only set Content-Type if not already provided via default headers
+        bool hasContentType = false;
+        for (const auto& h : headersCopy) {
+            if (h.name == "content-type") {
+                hasContentType = true;
+                break;
+            }
+        }
+        if (!hasContentType) {
+            // Auto-detect JSON body
+            if (data[0] == '{' || data[0] == '[') {
+                request->setHeader("Content-Type", "application/json");
+            } else {
+                request->setHeader("Content-Type", "application/x-www-form-urlencoded");
+            }
+        }
     }
     request->finalizeQueryParams(); // ensure built queries closed
     return this->request(std::move(request), onSuccess, onError);
@@ -325,7 +340,7 @@ uint32_t AsyncHttpClient::request(std::unique_ptr<AsyncHttpRequest> request, Suc
             onError(CONNECTION_FAILED, "Invalid URL");
         return 0;
     }
-    std::unique_ptr<RequestContext> ctx(new RequestContext());
+    auto ctx = std::make_shared<RequestContext>();
     ctx->request = std::move(request);
     ctx->response = std::make_shared<AsyncHttpResponse>();
     ctx->onSuccess = onSuccess;
@@ -353,14 +368,14 @@ bool AsyncHttpClient::abort(uint32_t requestId) {
     lock();
     for (size_t i = 0; i < _activeRequests.size(); ++i) {
         RequestContext* ctx = _activeRequests[i].get();
-        if (ctx && ctx->id == requestId && !ctx->responseProcessed) {
+        if (ctx && ctx->id == requestId && !ctx->cancelled.load()) {
             unlock();
             triggerError(ctx, ABORTED, "Aborted by user");
             return true;
         }
     }
     // Pending queue: still not executed
-    std::unique_ptr<RequestContext> pending;
+    std::shared_ptr<RequestContext> pending;
     for (auto it = _pendingQueue.begin(); it != _pendingQueue.end(); ++it) {
         if ((*it)->id == requestId) {
             pending = std::move(*it);
@@ -376,7 +391,7 @@ bool AsyncHttpClient::abort(uint32_t requestId) {
     return false;
 }
 
-void AsyncHttpClient::executeOrQueue(std::unique_ptr<RequestContext> context) {
+void AsyncHttpClient::executeOrQueue(std::shared_ptr<RequestContext> context) {
     if (!context)
         return;
     lock();
@@ -412,44 +427,62 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     if (context->usingPooledConnection)
         context->timing.connectTimeoutMs = 0;
 
+    // Find the shared_ptr for this context to capture in transport lambdas.
+    // This keeps the RequestContext alive even after cleanup() erases it from _activeRequests.
+    std::shared_ptr<RequestContext> ctxShared;
+    lock();
+    for (auto& sp : _activeRequests) {
+        if (sp.get() == context) {
+            ctxShared = sp;
+            break;
+        }
+    }
+    unlock();
+
     context->transport->setConnectHandler(
-        [this](void* arg, AsyncTransport* t) {
+        [this, ctxShared](void* /*arg*/, AsyncTransport* t) {
             (void)t;
-            auto ctx = static_cast<RequestContext*>(arg);
-            handleConnect(ctx);
+            if (ctxShared->cancelled.load())
+                return;
+            handleConnect(ctxShared.get());
         },
-        context);
+        nullptr);
     context->transport->setDataHandler(
-        [this](void* arg, AsyncTransport* t, void* data, size_t len) {
+        [this, ctxShared](void* /*arg*/, AsyncTransport* t, void* data, size_t len) {
             (void)t;
-            auto ctx = static_cast<RequestContext*>(arg);
-            handleData(ctx, static_cast<char*>(data), len);
+            if (ctxShared->cancelled.load())
+                return;
+            handleData(ctxShared.get(), static_cast<char*>(data), len);
         },
-        context);
+        nullptr);
     context->transport->setDisconnectHandler(
-        [this](void* arg, AsyncTransport* t) {
+        [this, ctxShared](void* /*arg*/, AsyncTransport* t) {
             (void)t;
-            auto ctx = static_cast<RequestContext*>(arg);
-            handleDisconnect(ctx);
+            if (ctxShared->cancelled.load())
+                return;
+            handleDisconnect(ctxShared.get());
         },
-        context);
+        nullptr);
     context->transport->setErrorHandler(
-        [this](void* arg, AsyncTransport* t, HttpClientError error, const char* message) {
+        [this, ctxShared](void* /*arg*/, AsyncTransport* t, HttpClientError error, const char* message) {
             (void)t;
-            auto ctx = static_cast<RequestContext*>(arg);
-            handleTransportError(ctx, error, message);
+            if (ctxShared->cancelled.load())
+                return;
+            handleTransportError(ctxShared.get(), error, message);
         },
-        context);
+        nullptr);
 
 #if ASYNC_TCP_HAS_TIMEOUT
     context->transport->setTimeout(context->request->getTimeout());
     context->transport->setTimeoutHandler(
-        [this](void* arg, AsyncTransport* transport, uint32_t t) {
+        [this, ctxShared](void* /*arg*/, AsyncTransport* transport, uint32_t t) {
             (void)transport;
-            auto ctx = static_cast<RequestContext*>(arg);
-            triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
+            (void)t;
+            if (ctxShared->cancelled.load())
+                return;
+            triggerError(ctxShared.get(), REQUEST_TIMEOUT, "Request timeout");
         },
-        context);
+        nullptr);
 #else
     context->timing.timeoutTimer = millis();
 #endif
@@ -463,7 +496,7 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
 }
 
 void AsyncHttpClient::handleConnect(RequestContext* context) {
-    if (!context || !context->transport)
+    if (!context || context->cancelled.load() || !context->transport)
         return;
     if (context->request->hasBodyStream()) {
         String headers = context->request->buildHeadersOnly();
@@ -576,15 +609,19 @@ bool AsyncHttpClient::finalizeDecoding(RequestContext* context, bool storeBody, 
 }
 
 void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len) {
-    if (!context)
+    if (!context || context->cancelled.load())
         return;
     bool storeBody = context->request && !context->request->getNoStoreBody();
-    bool bufferThisChunk = (!context->headersComplete || context->chunk.chunked);
-    if (bufferThisChunk)
-        context->responseBuffer.concat(data, len);
     bool enforceLimit = shouldEnforceBodyLimit(context);
 
+    // Track position in incoming data buffer for direct delivery
+    size_t dataOffset = 0;
+
+    // Before headers are complete, buffer everything into responseBuffer
     if (!context->headersComplete) {
+        context->responseBuffer.concat(data, len);
+        dataOffset = len; // all consumed into buffer
+
         int headerEnd = context->responseBuffer.indexOf("\r\n\r\n");
         if (_maxHeaderBytes > 0) {
             size_t headerBytes = headerEnd != -1 ? static_cast<size_t>(headerEnd + 4)
@@ -615,6 +652,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                 context->responseBuffer.remove(0, headerEnd + 4);
                 if (_redirectHandler && _redirectHandler->handleRedirect(context))
                     return;
+                // Deliver any leftover body bytes after the headers
                 if (!context->chunk.chunked && context->responseBuffer.length() > 0) {
                     size_t incomingLen = context->responseBuffer.length();
                     if (!gzipActive && wouldExceedBodyLimit(context, incomingLen, enforceLimit)) {
@@ -626,12 +664,15 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                         return;
                     context->responseBuffer = "";
                 }
+                // For chunked: responseBuffer may contain partial chunk metadata + data;
+                // fall through to the chunked processing loop below.
             } else {
                 triggerError(context, HEADER_PARSE_FAILED, "Failed to parse response headers");
                 return;
             }
         }
     } else if (!context->chunk.chunked) {
+        // Non-chunked body: deliver directly from incoming data, no buffering needed
 #if ASYNC_HTTP_ENABLE_GZIP_DECODE
         bool gzipActive = context->gzip.gzipDecodeActive;
 #else
@@ -643,8 +684,34 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
         }
         if (!deliverWireBytes(context, data, len, storeBody, enforceLimit))
             return;
+        dataOffset = len;
+    } else {
+        // Chunked mode with headers already complete: deliver chunk body bytes
+        // directly from the incoming data buffer when possible.
+        // Only buffer metadata (chunk size lines, trailers, partial bytes).
+
+        // First, if we have currentChunkRemaining > 0, deliver directly from data
+        while (dataOffset < len && context->chunk.currentChunkRemaining > 0) {
+            size_t canDeliver = std::min(len - dataOffset, context->chunk.currentChunkRemaining);
+            if (!deliverWireBytes(context, data + dataOffset, canDeliver, storeBody, enforceLimit))
+                return;
+            dataOffset += canDeliver;
+            context->chunk.currentChunkRemaining -= canDeliver;
+
+            if (context->chunk.currentChunkRemaining == 0) {
+                // Need to consume the trailing \r\n after chunk data
+                // Append remaining data to responseBuffer for CRLF + next chunk size parsing
+                break;
+            }
+        }
+        // Buffer any remaining data for metadata parsing (CRLF, chunk size lines, trailers)
+        if (dataOffset < len) {
+            context->responseBuffer.concat(data + dataOffset, len - dataOffset);
+            dataOffset = len;
+        }
     }
 
+    // Chunked processing loop: parse chunk metadata from responseBuffer
     while (context->headersComplete && context->chunk.chunked && !context->chunk.chunkedComplete) {
         if (context->chunk.awaitingFinalChunkTerminator) {
             int lineEndT = context->responseBuffer.indexOf("\r\n");
@@ -691,6 +758,7 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
         }
 
         if (context->chunk.currentChunkRemaining == 0) {
+            // Need to parse the next chunk size line from responseBuffer
             if (context->responseBuffer.length() > kMaxChunkSizeLineLen &&
                 context->responseBuffer.indexOf("\r\n") == -1) {
                 triggerError(context, CHUNKED_DECODE_FAILED, "Chunk size line too long");
@@ -733,20 +801,40 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                 continue;
             }
         }
-        size_t needed = context->chunk.currentChunkRemaining + 2;
-        if (context->responseBuffer.length() < needed)
-            break;
-        if (context->responseBuffer.charAt(context->chunk.currentChunkRemaining) != '\r' ||
-            context->responseBuffer.charAt(context->chunk.currentChunkRemaining + 1) != '\n') {
-            triggerError(context, CHUNKED_DECODE_FAILED, "Chunk missing terminating CRLF");
-            return;
+
+        // Deliver chunk body bytes directly from responseBuffer if available
+        if (context->chunk.currentChunkRemaining > 0 && context->responseBuffer.length() > 0) {
+            size_t available = context->responseBuffer.length();
+            size_t canDeliver = std::min(available, context->chunk.currentChunkRemaining);
+
+            // Check if we have enough data to also verify the trailing CRLF
+            if (canDeliver == context->chunk.currentChunkRemaining) {
+                // We might have the full chunk + CRLF in the buffer
+                size_t needed = context->chunk.currentChunkRemaining + 2;
+                if (available < needed)
+                    break; // wait for more data including CRLF
+                if (context->responseBuffer.charAt(context->chunk.currentChunkRemaining) != '\r' ||
+                    context->responseBuffer.charAt(context->chunk.currentChunkRemaining + 1) != '\n') {
+                    triggerError(context, CHUNKED_DECODE_FAILED, "Chunk missing terminating CRLF");
+                    return;
+                }
+                const char* chunkPtr = context->responseBuffer.c_str();
+                if (!deliverWireBytes(context, chunkPtr, canDeliver, storeBody, enforceLimit))
+                    return;
+                context->responseBuffer.remove(0, needed);
+                context->chunk.currentChunkRemaining = 0;
+            } else {
+                // Partial chunk data in buffer — deliver what we have
+                const char* chunkPtr = context->responseBuffer.c_str();
+                if (!deliverWireBytes(context, chunkPtr, canDeliver, storeBody, enforceLimit))
+                    return;
+                context->responseBuffer.remove(0, canDeliver);
+                context->chunk.currentChunkRemaining -= canDeliver;
+                break; // need more data
+            }
+        } else if (context->chunk.currentChunkRemaining > 0) {
+            break; // need more data
         }
-        size_t chunkLen = context->chunk.currentChunkRemaining;
-        const char* chunkPtr = context->responseBuffer.c_str();
-        if (!deliverWireBytes(context, chunkPtr, chunkLen, storeBody, enforceLimit))
-            return;
-        context->responseBuffer.remove(0, needed);
-        context->chunk.currentChunkRemaining = 0;
     }
 
     if (context->headersComplete && !context->responseProcessed) {
@@ -793,7 +881,7 @@ bool AsyncHttpClient::parseChunkSizeLine(const String& line, uint32_t* outSize) 
 }
 
 void AsyncHttpClient::handleDisconnect(RequestContext* context) {
-    if (context->responseProcessed)
+    if (!context || context->cancelled.load() || context->responseProcessed)
         return;
     if (!context->headersComplete) {
         triggerError(context, CONNECTION_CLOSED, "Connection closed before headers received");
@@ -824,7 +912,7 @@ void AsyncHttpClient::handleDisconnect(RequestContext* context) {
 }
 
 void AsyncHttpClient::handleTransportError(RequestContext* context, HttpClientError error, const char* message) {
-    if (context->responseProcessed)
+    if (!context || context->cancelled.load() || context->responseProcessed)
         return;
     if (!message)
         message = httpClientErrorToString(error);
@@ -860,13 +948,20 @@ bool AsyncHttpClient::parseResponseHeaders(RequestContext* context, const String
             lowerName.toLowerCase();
             context->response->setHeader(lowerName, value);
             if (lowerName == "content-length") {
-                long parsed = value.toInt();
-                if (parsed < 0)
-                    parsed = 0;
-                context->expectedContentLength = (size_t)parsed;
+                const char* clStr = value.c_str();
+                char* endptr = nullptr;
+                errno = 0;
+                unsigned long cl = strtoul(clStr, &endptr, 10);
+                if (endptr == clStr || *endptr != '\0' || errno == ERANGE) {
+                    cl = 0; // invalid Content-Length, treat as unknown
+                }
+                context->expectedContentLength = (size_t)cl;
                 context->response->setContentLength(context->expectedContentLength);
-            } else if (lowerName == "transfer-encoding" && value.equalsIgnoreCase("chunked")) {
-                context->chunk.chunked = true;
+            } else if (lowerName == "transfer-encoding") {
+                String lower = value;
+                lower.toLowerCase();
+                if (lower.indexOf("chunked") != -1)
+                    context->chunk.chunked = true;
             } else if (lowerName == "content-encoding") {
 #if ASYNC_HTTP_ENABLE_GZIP_DECODE
                 String lower = value;
@@ -909,6 +1004,10 @@ void AsyncHttpClient::processResponse(RequestContext* context) {
 }
 
 void AsyncHttpClient::cleanup(RequestContext* context) {
+    // Signal cancellation BEFORE erasing — transport callbacks capturing
+    // the shared_ptr will see this and bail out immediately.
+    context->cancelled.store(true);
+
     AsyncTransport* toDelete = nullptr;
     if (context->transport) {
         bool recycle = false;
@@ -931,7 +1030,7 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
     context->response.reset();
     lock();
     auto it = std::find_if(_activeRequests.begin(), _activeRequests.end(),
-                           [context](const std::unique_ptr<RequestContext>& ptr) { return ptr.get() == context; });
+                           [context](const std::shared_ptr<RequestContext>& ptr) { return ptr.get() == context; });
     if (it != _activeRequests.end())
         _activeRequests.erase(it);
     unlock();
@@ -943,7 +1042,7 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
 }
 
 void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage) {
-    if (context->responseProcessed)
+    if (context->cancelled.load() || context->responseProcessed)
         return;
     context->responseProcessed = true;
     if (context->onError)
@@ -960,19 +1059,20 @@ void AsyncHttpClient::loop() {
     for (size_t i = 0; i < _activeRequests.size();) {
         RequestContext* ctx = _activeRequests[i].get();
 #if !ASYNC_TCP_HAS_TIMEOUT
-        if (!ctx->responseProcessed && (now - ctx->timing.timeoutTimer) >= ctx->request->getTimeout()) {
+        if (!ctx->cancelled.load() && !ctx->responseProcessed &&
+            (now - ctx->timing.timeoutTimer) >= ctx->request->getTimeout()) {
             unlock();
             triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
             lock();
         }
 #endif
-        if (!ctx->responseProcessed && ctx->transport && !ctx->headersSent && ctx->timing.connectTimeoutMs > 0 &&
-            (now - ctx->timing.connectStartMs) > ctx->timing.connectTimeoutMs) {
+        if (!ctx->cancelled.load() && !ctx->responseProcessed && ctx->transport && !ctx->headersSent &&
+            ctx->timing.connectTimeoutMs > 0 && (now - ctx->timing.connectStartMs) > ctx->timing.connectTimeoutMs) {
             unlock();
             triggerError(ctx, CONNECT_TIMEOUT, "Connect timeout");
             lock();
         }
-        if (!ctx->responseProcessed && ctx->transport && ctx->transport->isHandshaking()) {
+        if (!ctx->cancelled.load() && !ctx->responseProcessed && ctx->transport && ctx->transport->isHandshaking()) {
             uint32_t hsTimeout = ctx->transport->getHandshakeTimeoutMs();
             uint32_t hsStart = ctx->transport->getHandshakeStartMs();
             if (hsTimeout > 0 && hsStart > 0 && (now - hsStart) > hsTimeout) {
@@ -981,7 +1081,8 @@ void AsyncHttpClient::loop() {
                 lock();
             }
         }
-        if (!ctx->responseProcessed && ctx->streamingBodyInProgress && ctx->request->hasBodyStream()) {
+        if (!ctx->cancelled.load() && !ctx->responseProcessed && ctx->streamingBodyInProgress &&
+            ctx->request->hasBodyStream()) {
             unlock();
             sendStreamData(ctx);
             lock();
@@ -1004,7 +1105,7 @@ void AsyncHttpClient::tryDequeue() {
             break;
         }
         _activeRequests.push_back(std::move(_pendingQueue.front()));
-        _pendingQueue.erase(_pendingQueue.begin());
+        _pendingQueue.pop_front();
         RequestContext* ctx = _activeRequests.back().get();
         unlock();
         executeRequest(ctx);
@@ -1041,8 +1142,8 @@ bool AsyncHttpClient::shouldEnforceBodyLimit(RequestContext* context) {
         return false;
     if (!context || !context->request)
         return true;
-    if (context->request->getNoStoreBody())
-        return false;
+    // Always enforce body limit even in streaming (noStoreBody) mode to protect
+    // against a malicious server sending unbounded data.
     return true;
 }
 

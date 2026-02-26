@@ -117,6 +117,13 @@ std::unique_ptr<AsyncHttpRequest> request(new AsyncHttpRequest(HTTP_METHOD_GET, 
 client.request(std::move(request), onSuccess, onError);
 ```
 
+## Migration v2 → v2.1
+
+- **No breaking API changes** — all public APIs remain the same.
+- `setMaxBodySize()` is now enforced even when `setNoStoreBody(true)` is active (streaming mode). If you relied on unlimited streaming, call `setMaxBodySize(0)` explicitly.
+- `Content-Type` is now auto-detected for `post()`/`put()`/`patch()`: JSON bodies (starting with `{` or `[`) get `application/json`. Set a `Content-Type` header explicitly (via `setHeader()` or per-request) to override.
+- `Transfer-Encoding: gzip, chunked` (multi-value) is now correctly parsed as chunked.
+
 ## API Reference
 
 ### AsyncHttpClient Class
@@ -289,10 +296,12 @@ client.get("http://api.example.com/data",
 
 ### POST with JSON Data
 
+Since v2.1, `Content-Type` is auto-detected: bodies starting with `{` or `[` default to `application/json`, otherwise `application/x-www-form-urlencoded`. You can still override via `client.setHeader("Content-Type", ...)` or per-request headers.
+
 ```cpp
-client.setHeader("Content-Type", "application/json");
 String jsonData = "{\"sensor\":\"temperature\",\"value\":25.5}";
 
+// Content-Type: application/json is set automatically
 client.post("http://api.example.com/sensor", jsonData.c_str(),
     [](std::shared_ptr<AsyncHttpResponse> response) {
         Serial.printf("Posted data, status: %d\n", response->getStatusCode());
@@ -423,7 +432,7 @@ Notes:
 
 If `Content-Length` is present, the response is considered complete once that many bytes have been received. Extra bytes (if a misbehaving server sends more) are ignored. Without `Content-Length`, completion is determined by connection close.
 
-Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` to disable the guard (this applies only when buffering the response body in memory).
+Configure `client.setMaxBodySize(maxBytes)` to abort early when the announced `Content-Length` or accumulated chunk data would exceed `maxBytes`, yielding `MAX_BODY_SIZE_EXCEEDED`. Pass `0` to disable the guard. Since v2.1 the limit is enforced even in streaming mode (`setNoStoreBody(true)`) to protect against a malicious server sending unbounded data — the bytes are counted but not stored.
 
 Likewise, guard against oversized or malicious header blocks via `client.setMaxHeaderBytes(limit)`. When the cumulative response headers exceed `limit` bytes before completion of `\r\n\r\n`, the request aborts with `HEADERS_TOO_LARGE`.
 
@@ -461,9 +470,9 @@ Common HTTPS errors:
 
 ## Thread Safety
 
-- The library is designed for single-threaded use (Arduino main loop)
-- Callbacks are executed in the context of the network event loop
-- Keep callback functions lightweight and non-blocking
+- AsyncTCP callbacks run on the lwIP/WiFi task while `loop()` (or the auto-loop task) runs on a different core. Since v2.1 the library guards against use-after-free by holding `RequestContext` in `std::shared_ptr` (captured by transport lambdas) and using an `std::atomic<bool> cancelled` flag that is set before cleanup erases the context.
+- On ESP32 with `ASYNC_HTTP_ENABLE_AUTOLOOP`, a recursive mutex protects shared containers (`_activeRequests`, `_pendingQueue`, etc.).
+- Callbacks are still executed in the context of the network event loop — keep them lightweight and non-blocking.
 
 ## Dependencies
 
@@ -490,14 +499,13 @@ Common HTTPS errors:
 ## Object lifecycle / Ownership
 
 1. `AsyncHttpClient::makeRequest()` creates a dynamic `AsyncHttpRequest` (or you pass yours to `request()`).
-2. `request()` allocates a `RequestContext`, an `AsyncHttpResponse` and an `AsyncTransport`.
-3. Once connected the fully built HTTP request is written (`buildHttpRequest()`).
-4. Reception: headers buffered until `\r\n\r\n`, then body accumulation (or chunk decoding).
-5. On complete success: success callback invoked with `std::shared_ptr<AsyncHttpResponse>`.
-6. On error or after success callback returns: `cleanup()` deletes the transport, `AsyncHttpRequest`, and `RequestContext`.
-7. The response is freed when the last `shared_ptr` copy is released.
-
-For very large bodies or future streaming options, a hook would be placed inside `handleData` after `headersComplete` before `appendBody`.
+2. `request()` allocates a `RequestContext` as `shared_ptr`, an `AsyncHttpResponse` and an `AsyncTransport`.
+3. Transport callbacks capture the `shared_ptr<RequestContext>`, keeping the context alive even after `cleanup()` erases it from `_activeRequests`.
+4. Once connected the fully built HTTP request is written (`buildHttpRequest()`).
+5. Reception: headers buffered until `\r\n\r\n`, then body accumulation (or chunk decoding).
+6. On complete success: success callback invoked with `std::shared_ptr<AsyncHttpResponse>`.
+7. On error or after success callback returns: `cleanup()` sets `cancelled = true`, releases the transport and erases the context from `_activeRequests`. The `RequestContext` is destroyed when the last `shared_ptr` reference (including those in transport lambdas) is released.
+8. The response is freed when the last `shared_ptr` copy is released.
 
 ## Error Codes
 

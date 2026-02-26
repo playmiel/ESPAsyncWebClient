@@ -5,6 +5,8 @@
 #define ASYNC_HTTP_CLIENT_H
 
 #include <Arduino.h>
+#include <atomic>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -152,6 +154,8 @@ class AsyncHttpClient {
         };
 #endif
 
+        std::atomic<bool> cancelled{false};
+
         std::unique_ptr<AsyncHttpRequest> request;
         std::shared_ptr<AsyncHttpResponse> response;
         SuccessCallback onSuccess;
@@ -190,8 +194,8 @@ class AsyncHttpClient {
     bool _followRedirects = false;
     uint8_t _maxRedirectHops = 3;
     size_t _maxHeaderBytes = 0;
-    std::vector<std::unique_ptr<RequestContext>> _activeRequests;
-    std::vector<std::unique_ptr<RequestContext>> _pendingQueue;
+    std::vector<std::shared_ptr<RequestContext>> _activeRequests;
+    std::deque<std::shared_ptr<RequestContext>> _pendingQueue;
     uint32_t _defaultConnectTimeout = 5000;
     AsyncHttpTLSConfig _defaultTlsConfig;
     bool _keepAliveEnabled = false;
@@ -207,7 +211,7 @@ class AsyncHttpClient {
     // Internal methods
     uint32_t makeRequest(HttpMethod method, const char* url, const char* data, SuccessCallback onSuccess,
                          ErrorCallback onError);
-    void executeOrQueue(std::unique_ptr<RequestContext> context);
+    void executeOrQueue(std::shared_ptr<RequestContext> context);
     void executeRequest(RequestContext* context);
     void handleConnect(RequestContext* context);
     void handleData(RequestContext* context, char* data, size_t len);
