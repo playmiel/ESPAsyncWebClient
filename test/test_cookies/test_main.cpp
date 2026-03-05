@@ -3,7 +3,7 @@
 
 #define private public
 #include "AsyncHttpClient.h"
-#include "CookieJar.h"
+#include "AsyncCookieJar.h"
 #undef private
 
 static void test_domain_matching_subdomains() {

@@ -10,7 +10,7 @@
 #include <memory>
 #include <utility>
 #include "ConnectionPool.h"
-#include "CookieJar.h"
+#include "AsyncCookieJar.h"
 #include "HttpHelpers.h"
 #include "RedirectHandler.h"
 
@@ -24,7 +24,7 @@ AsyncHttpClient::AsyncHttpClient()
     : _defaultTimeout(10000), _defaultUserAgent(String("ESPAsyncWebClient/") + ESP_ASYNC_WEB_CLIENT_VERSION),
       _bodyChunkCallback(nullptr), _maxBodySize(kDefaultMaxBodyBytes), _followRedirects(false), _maxRedirectHops(3),
       _maxHeaderBytes(kDefaultMaxHeaderBytes) {
-    _cookieJar.reset(new CookieJar(this));
+    _cookieJar.reset(new AsyncCookieJar(this));
     _connectionPool.reset(new ConnectionPool(this));
     _redirectHandler.reset(new RedirectHandler(this));
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)

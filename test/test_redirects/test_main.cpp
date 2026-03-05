@@ -4,7 +4,7 @@
 
 #define private public
 #include "AsyncHttpClient.h"
-#include "CookieJar.h"
+#include "AsyncCookieJar.h"
 #include "RedirectHandler.h"
 #undef private
 

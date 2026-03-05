@@ -7,9 +7,9 @@
 
 class AsyncHttpClient;
 
-class CookieJar {
+class AsyncCookieJar {
   public:
-    explicit CookieJar(AsyncHttpClient* client);
+    explicit AsyncCookieJar(AsyncHttpClient* client);
 
     void clearCookies();
     void setAllowCookieDomainAttribute(bool enable);

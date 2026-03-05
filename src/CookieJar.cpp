@@ -1,4 +1,4 @@
-#include "CookieJar.h"
+#include "AsyncCookieJar.h"
 #include <cctype>
 #include <cstring>
 #include "AsyncHttpClient.h"
@@ -17,31 +17,31 @@ static uint8_t countDomainDots(const String& domain) {
     return dots;
 }
 
-CookieJar::CookieJar(AsyncHttpClient* client) : _client(client) {}
+AsyncCookieJar::AsyncCookieJar(AsyncHttpClient* client) : _client(client) {}
 
-void CookieJar::lock() const {
+void AsyncCookieJar::lock() const {
     if (_client)
         _client->lock();
 }
 
-void CookieJar::unlock() const {
+void AsyncCookieJar::unlock() const {
     if (_client)
         _client->unlock();
 }
 
-void CookieJar::clearCookies() {
+void AsyncCookieJar::clearCookies() {
     lock();
     _cookies.clear();
     unlock();
 }
 
-void CookieJar::setAllowCookieDomainAttribute(bool enable) {
+void AsyncCookieJar::setAllowCookieDomainAttribute(bool enable) {
     lock();
     _allowCookieDomainAttribute = enable;
     unlock();
 }
 
-void CookieJar::addAllowedCookieDomain(const char* domain) {
+void AsyncCookieJar::addAllowedCookieDomain(const char* domain) {
     if (!domain || strlen(domain) == 0)
         return;
     String normalized = normalizeDomainForStorage(String(domain));
@@ -60,13 +60,13 @@ void CookieJar::addAllowedCookieDomain(const char* domain) {
     unlock();
 }
 
-void CookieJar::clearAllowedCookieDomains() {
+void AsyncCookieJar::clearAllowedCookieDomains() {
     lock();
     _allowedCookieDomains.clear();
     unlock();
 }
 
-void CookieJar::setCookie(const char* name, const char* value, const char* path, const char* domain, bool secure) {
+void AsyncCookieJar::setCookie(const char* name, const char* value, const char* path, const char* domain, bool secure) {
     if (!name || strlen(name) == 0)
         return;
     if (!isValidHttpHeaderValue(String(name)))
@@ -108,7 +108,7 @@ void CookieJar::setCookie(const char* name, const char* value, const char* path,
     unlock();
 }
 
-bool CookieJar::isIpLiteral(const String& host) const {
+bool AsyncCookieJar::isIpLiteral(const String& host) const {
     if (host.length() == 0)
         return false;
     bool hasColon = false;
@@ -131,7 +131,7 @@ bool CookieJar::isIpLiteral(const String& host) const {
     return hasColon || hasDot;
 }
 
-bool CookieJar::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided,
+bool AsyncCookieJar::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided,
                                       bool* outHostOnly) const {
     if (outHostOnly)
         *outHostOnly = true;
@@ -186,7 +186,7 @@ bool CookieJar::normalizeCookieDomain(String& domain, const String& host, bool d
     return true;
 }
 
-bool CookieJar::domainMatches(const String& cookieDomain, const String& host) const {
+bool AsyncCookieJar::domainMatches(const String& cookieDomain, const String& host) const {
     if (cookieDomain.length() == 0)
         return true;
     if (host.equalsIgnoreCase(cookieDomain))
@@ -199,7 +199,7 @@ bool CookieJar::domainMatches(const String& cookieDomain, const String& host) co
     return host.substring(offset).equalsIgnoreCase(cookieDomain);
 }
 
-bool CookieJar::pathMatches(const String& cookiePath, const String& requestPath) const {
+bool AsyncCookieJar::pathMatches(const String& cookiePath, const String& requestPath) const {
     String req = requestPath;
     int q = req.indexOf('?');
     if (q != -1)
@@ -218,7 +218,7 @@ bool CookieJar::pathMatches(const String& cookiePath, const String& requestPath)
     return req.length() > cpath.length() && req.charAt(cpath.length()) == '/';
 }
 
-bool CookieJar::cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request,
+bool AsyncCookieJar::cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request,
                                      int64_t nowSeconds) const {
     if (!request)
         return false;
@@ -238,11 +238,11 @@ bool CookieJar::cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttp
     return !cookie.value.isEmpty();
 }
 
-bool CookieJar::isCookieExpired(const StoredCookie& cookie, int64_t nowSeconds) const {
+bool AsyncCookieJar::isCookieExpired(const StoredCookie& cookie, int64_t nowSeconds) const {
     return cookie.expiresAt != -1 && nowSeconds >= cookie.expiresAt;
 }
 
-void CookieJar::purgeExpiredCookies(int64_t nowSeconds) {
+void AsyncCookieJar::purgeExpiredCookies(int64_t nowSeconds) {
     for (auto it = _cookies.begin(); it != _cookies.end();) {
         if (isCookieExpired(*it, nowSeconds)) {
             it = _cookies.erase(it);
@@ -252,7 +252,7 @@ void CookieJar::purgeExpiredCookies(int64_t nowSeconds) {
     }
 }
 
-void CookieJar::evictOneCookieLocked() {
+void AsyncCookieJar::evictOneCookieLocked() {
     if (_cookies.empty())
         return;
     size_t bestIndex = 0;
@@ -303,7 +303,7 @@ void CookieJar::evictOneCookieLocked() {
     _cookies.erase(_cookies.begin() + static_cast<std::vector<StoredCookie>::difference_type>(bestIndex));
 }
 
-void CookieJar::applyCookies(AsyncHttpRequest* request) {
+void AsyncCookieJar::applyCookies(AsyncHttpRequest* request) {
     if (!request)
         return;
     int64_t now = currentTimeSeconds();
@@ -343,7 +343,7 @@ void CookieJar::applyCookies(AsyncHttpRequest* request) {
     }
 }
 
-void CookieJar::storeResponseCookie(const AsyncHttpRequest* request, const String& setCookieValue) {
+void AsyncCookieJar::storeResponseCookie(const AsyncHttpRequest* request, const String& setCookieValue) {
     if (!request)
         return;
     String raw = setCookieValue;
