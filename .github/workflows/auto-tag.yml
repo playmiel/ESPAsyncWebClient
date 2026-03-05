@@ -1,0 +1,71 @@
+name: Auto Tag on Version Bump
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'library.json'
+      - 'library.properties'
+      - 'src/HttpCommon.h'
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-tag:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history needed for tag comparison
+
+      - name: Extract version from library.json
+        id: version
+        run: |
+          VERSION=$(grep -m1 '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Detected version: ${VERSION}"
+
+      - name: Verify version consistency across files
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          V_PROP=$(grep '^version=' library.properties | cut -d'=' -f2)
+          V_HDR=$(grep '#define ESP_ASYNC_WEB_CLIENT_VERSION' src/HttpCommon.h | sed -E 's/.*"([^"]+)".*/\1/')
+
+          MISMATCH=0
+          if [[ "${VERSION}" != "${V_PROP}" ]]; then
+            echo "::error::Version mismatch: library.json=${VERSION} vs library.properties=${V_PROP}"
+            MISMATCH=1
+          fi
+          if [[ "${VERSION}" != "${V_HDR}" ]]; then
+            echo "::error::Version mismatch: library.json=${VERSION} vs HttpCommon.h=${V_HDR}"
+            MISMATCH=1
+          fi
+          if [[ $MISMATCH -ne 0 ]]; then
+            echo "::error::Fix version mismatches before tagging. Use: scripts/sync-version.sh <version>"
+            exit 1
+          fi
+          echo "All 3 version sources agree: ${VERSION}"
+
+      - name: Check if tag already exists
+        id: tag_check
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} already exists — skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} does not exist — will create."
+          fi
+
+      - name: Create and push tag
+        if: steps.tag_check.outputs.exists == 'false'
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+          echo "::notice::Created and pushed tag ${TAG}"

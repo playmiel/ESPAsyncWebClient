@@ -11,6 +11,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # full history for changelog generation
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -59,16 +61,100 @@ jobs:
         name: source-archive
         path: ${{ env.ARCHIVE }}
     
+    - name: Extract changelog for this version
+      id: changelog
+      run: |
+        VERSION=$(grep '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+        # Extract the section for this version from CHANGELOG.md
+        # Matches everything between "## [X.Y.Z]" and the next "## [" heading
+        NOTES=""
+        if [[ -f CHANGELOG.md ]]; then
+          NOTES=$(awk -v ver="${VERSION}" '
+            BEGIN { found=0 }
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "\\[" ver "\\]") { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md)
+        fi
+
+        if [[ -z "${NOTES}" ]]; then
+          echo "No CHANGELOG entry found for ${VERSION}, generating from commits..."
+          # Get the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [[ -n "${PREV_TAG}" ]]; then
+            NOTES=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
+          else
+            NOTES=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
+          fi
+        fi
+
+        # Write to file to preserve multiline
+        echo "${NOTES}" > /tmp/release_notes.md
+
+    - name: Generate AI-style release summary
+      id: summary
+      run: |
+        VERSION="${{ steps.changelog.outputs.version }}"
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+        # Build a structured release body
+        {
+          echo "# ESPAsyncWebClient v${VERSION}"
+          echo ""
+
+          # Changelog section
+          echo "## What's Changed"
+          cat /tmp/release_notes.md
+          echo ""
+
+          # Auto-generated commit summary by category
+          if [[ -n "${PREV_TAG}" ]]; then
+            echo "## Commit Summary"
+            echo ""
+
+            # Fixes
+            FIXES=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges --grep="^[Ff]ix" || true)
+            if [[ -n "${FIXES}" ]]; then
+              echo "### Bug Fixes"
+              echo "${FIXES}"
+              echo ""
+            fi
+
+            # Features
+            FEATURES=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges --grep="^[Ff]eat" || true)
+            if [[ -n "${FEATURES}" ]]; then
+              echo "### New Features"
+              echo "${FEATURES}"
+              echo ""
+            fi
+
+            # Other commits
+            OTHER=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges --invert-grep --grep="^[Ff]ix" --grep="^[Ff]eat" || true)
+            if [[ -n "${OTHER}" ]]; then
+              echo "### Other Changes"
+              echo "${OTHER}"
+              echo ""
+            fi
+
+            echo "**Full diff**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v${VERSION}"
+            echo ""
+          fi
+
+          # Stats
+          echo "## Verification"
+          echo "- :white_check_mark: All examples built successfully"
+          echo "- :white_check_mark: Version metadata consistent across library.json, library.properties, and HttpCommon.h"
+          echo "- :package: Source archive attached"
+        } > /tmp/full_release_notes.md
+
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
         files: ${{ env.ARCHIVE }}
-        name: Release ${{ github.ref }}
-        body: |
-          ## Changes in this release
-          See the Git diff for this tag or the Releases page for details.
-          
-          ## Verification
-          - Examples built successfully
-          - Version metadata consistent
-          - Source archive attached
+        name: "v${{ steps.changelog.outputs.version }}"
+        body_path: /tmp/full_release_notes.md
+        generate_release_notes: true
