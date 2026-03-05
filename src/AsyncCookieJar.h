@@ -1,5 +1,5 @@
-#ifndef COOKIE_JAR_H
-#define COOKIE_JAR_H
+#ifndef ASYNC_COOKIE_JAR_H
+#define ASYNC_COOKIE_JAR_H
 
 #include <Arduino.h>
 #include <vector>
@@ -51,4 +51,4 @@ class AsyncCookieJar {
     std::vector<StoredCookie> _cookies;
 };
 
-#endif // COOKIE_JAR_H
+#endif // ASYNC_COOKIE_JAR_H
