@@ -35,7 +35,7 @@ AsyncHttpClient::AsyncHttpClient()
     // Optional: spawn a lightweight auto-loop task so users don't need to call client.loop() manually.
     xTaskCreatePinnedToCore(_autoLoopTaskThunk,   // task entry
                             "AsyncHttpAutoLoop",  // name
-                            2048,                 // stack words
+                            4096,                 // stack words
                             this,                 // parameter
                             1,                    // priority (low)
                             &_autoLoopTaskHandle, // handle out
@@ -1038,7 +1038,10 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
         toDelete->close();
         delete toDelete;
     }
-    tryDequeue();
+    // Guard against recursion: cleanup → tryDequeue → executeRequest → triggerError → cleanup → tryDequeue
+    // The outer tryDequeue's while-loop will handle remaining pending requests.
+    if (!_inTryDequeue)
+        tryDequeue();
 }
 
 void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage) {
@@ -1064,6 +1067,7 @@ void AsyncHttpClient::loop() {
             unlock();
             triggerError(ctx, REQUEST_TIMEOUT, "Request timeout");
             lock();
+            continue; // ctx may be freed; re-read at current index
         }
 #endif
         if (!ctx->cancelled.load() && !ctx->responseProcessed && ctx->transport && !ctx->headersSent &&
@@ -1071,6 +1075,7 @@ void AsyncHttpClient::loop() {
             unlock();
             triggerError(ctx, CONNECT_TIMEOUT, "Connect timeout");
             lock();
+            continue; // ctx may be freed; re-read at current index
         }
         if (!ctx->cancelled.load() && !ctx->responseProcessed && ctx->transport && ctx->transport->isHandshaking()) {
             uint32_t hsTimeout = ctx->transport->getHandshakeTimeoutMs();
@@ -1079,6 +1084,7 @@ void AsyncHttpClient::loop() {
                 unlock();
                 triggerError(ctx, TLS_HANDSHAKE_TIMEOUT, "TLS handshake timeout");
                 lock();
+                continue; // ctx may be freed; re-read at current index
             }
         }
         if (!ctx->cancelled.load() && !ctx->responseProcessed && ctx->streamingBodyInProgress &&
@@ -1097,6 +1103,9 @@ void AsyncHttpClient::loop() {
 }
 
 void AsyncHttpClient::tryDequeue() {
+    if (_inTryDequeue)
+        return; // prevent recursion via executeRequest → triggerError → cleanup → tryDequeue
+    _inTryDequeue = true;
     while (true) {
         lock();
         bool canStart = (_maxParallel == 0 || _activeRequests.size() < _maxParallel);
@@ -1110,6 +1119,7 @@ void AsyncHttpClient::tryDequeue() {
         unlock();
         executeRequest(ctx);
     }
+    _inTryDequeue = false;
 }
 
 void AsyncHttpClient::sendStreamData(RequestContext* context) {
