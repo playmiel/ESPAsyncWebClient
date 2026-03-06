@@ -429,6 +429,13 @@ bool AsyncTlsTransport::canSend() const {
 
 void AsyncTlsTransport::close(bool now) {
     (void)now;
+    if (_client) {
+        _client->onConnect(nullptr, nullptr);
+        _client->onData(nullptr, nullptr);
+        _client->onDisconnect(nullptr, nullptr);
+        _client->onError(nullptr, nullptr);
+        _client->onTimeout(nullptr, nullptr);
+    }
     if (_state == State::Established) {
         mbedtls_ssl_close_notify(&_ssl);
     }

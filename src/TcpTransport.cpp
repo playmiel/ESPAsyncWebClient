@@ -65,8 +65,14 @@ class AsyncTcpTransport : public AsyncTransport {
     }
     void close(bool now = false) override {
         (void)now;
-        if (_client)
+        if (_client) {
+            _client->onConnect(nullptr, nullptr);
+            _client->onData(nullptr, nullptr);
+            _client->onDisconnect(nullptr, nullptr);
+            _client->onError(nullptr, nullptr);
+            _client->onTimeout(nullptr, nullptr);
             _client->close();
+        }
     }
     bool isSecure() const override {
         return false;
