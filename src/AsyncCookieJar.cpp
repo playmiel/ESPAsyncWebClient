@@ -132,7 +132,7 @@ bool AsyncCookieJar::isIpLiteral(const String& host) const {
 }
 
 bool AsyncCookieJar::normalizeCookieDomain(String& domain, const String& host, bool domainAttributeProvided,
-                                      bool* outHostOnly) const {
+                                           bool* outHostOnly) const {
     if (outHostOnly)
         *outHostOnly = true;
     String hostLower = host;
@@ -219,7 +219,7 @@ bool AsyncCookieJar::pathMatches(const String& cookiePath, const String& request
 }
 
 bool AsyncCookieJar::cookieMatchesRequest(const StoredCookie& cookie, const AsyncHttpRequest* request,
-                                     int64_t nowSeconds) const {
+                                          int64_t nowSeconds) const {
     if (!request)
         return false;
     if (isCookieExpired(cookie, nowSeconds))

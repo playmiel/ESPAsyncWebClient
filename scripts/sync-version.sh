@@ -21,7 +21,25 @@ echo "Syncing version to ${NEW_VERSION} across all files..."
 
 # 1. library.json
 if [[ -f library.json ]]; then
-  sed -i -E "s/\"version\" *: *\"[^\"]+\"/\"version\": \"${NEW_VERSION}\"/" library.json
+  python3 - <<'PY' "${NEW_VERSION}"
+import json
+import sys
+
+new_version = sys.argv[1]
+path = "library.json"
+
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+if not isinstance(data, dict) or "version" not in data:
+    raise SystemExit("library.json missing top-level 'version' field")
+
+data["version"] = new_version
+
+with open(path, "w", encoding="utf-8", newline="\n") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+PY
   echo "  ✓ library.json"
 else
   echo "  ✗ library.json not found"
@@ -29,7 +47,23 @@ fi
 
 # 2. library.properties
 if [[ -f library.properties ]]; then
-  sed -i -E "s/^version=.*/version=${NEW_VERSION}/" library.properties
+  python3 - <<'PY' "${NEW_VERSION}"
+import re
+import sys
+
+new_version = sys.argv[1]
+path = "library.properties"
+
+with open(path, "r", encoding="utf-8") as f:
+    text = f.read()
+
+updated, count = re.subn(r"^version=.*$", f"version={new_version}", text, flags=re.MULTILINE)
+if count == 0:
+    raise SystemExit("library.properties missing 'version=' line")
+
+with open(path, "w", encoding="utf-8", newline="\n") as f:
+    f.write(updated)
+PY
   echo "  ✓ library.properties"
 else
   echo "  ✗ library.properties not found"
@@ -37,7 +71,25 @@ fi
 
 # 3. src/HttpCommon.h
 if [[ -f src/HttpCommon.h ]]; then
-  sed -i -E "s/#define ESP_ASYNC_WEB_CLIENT_VERSION \"[^\"]+\"/#define ESP_ASYNC_WEB_CLIENT_VERSION \"${NEW_VERSION}\"/" src/HttpCommon.h
+  python3 - <<'PY' "${NEW_VERSION}"
+import re
+import sys
+
+new_version = sys.argv[1]
+path = "src/HttpCommon.h"
+
+with open(path, "r", encoding="utf-8") as f:
+    text = f.read()
+
+pattern = r'#define ESP_ASYNC_WEB_CLIENT_VERSION "[^"]+"'
+replacement = f'#define ESP_ASYNC_WEB_CLIENT_VERSION "{new_version}"'
+updated, count = re.subn(pattern, replacement, text)
+if count == 0:
+    raise SystemExit("src/HttpCommon.h missing ESP_ASYNC_WEB_CLIENT_VERSION define")
+
+with open(path, "w", encoding="utf-8", newline="\n") as f:
+    f.write(updated)
+PY
   echo "  ✓ src/HttpCommon.h"
 else
   echo "  ✗ src/HttpCommon.h not found"

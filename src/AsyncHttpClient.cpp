@@ -1040,7 +1040,7 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
     }
     // Guard against recursion: cleanup → tryDequeue → executeRequest → triggerError → cleanup → tryDequeue
     // The outer tryDequeue's while-loop will handle remaining pending requests.
-    if (!_inTryDequeue)
+    if (!_inTryDequeue.load(std::memory_order_acquire))
         tryDequeue();
 }
 
@@ -1103,9 +1103,8 @@ void AsyncHttpClient::loop() {
 }
 
 void AsyncHttpClient::tryDequeue() {
-    if (_inTryDequeue)
+    if (_inTryDequeue.exchange(true, std::memory_order_acq_rel))
         return; // prevent recursion via executeRequest → triggerError → cleanup → tryDequeue
-    _inTryDequeue = true;
     while (true) {
         lock();
         bool canStart = (_maxParallel == 0 || _activeRequests.size() < _maxParallel);
@@ -1119,7 +1118,7 @@ void AsyncHttpClient::tryDequeue() {
         unlock();
         executeRequest(ctx);
     }
-    _inTryDequeue = false;
+    _inTryDequeue.store(false, std::memory_order_release);
 }
 
 void AsyncHttpClient::sendStreamData(RequestContext* context) {

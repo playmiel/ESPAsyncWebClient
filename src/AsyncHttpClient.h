@@ -200,7 +200,7 @@ class AsyncHttpClient {
     AsyncHttpTLSConfig _defaultTlsConfig;
     bool _keepAliveEnabled = false;
     uint32_t _keepAliveIdleMs = 5000;
-    bool _inTryDequeue = false; // reentrancy guard to prevent cleanup → tryDequeue recursion
+    std::atomic_bool _inTryDequeue{false}; // cross-task reentrancy guard
     std::unique_ptr<AsyncCookieJar> _cookieJar;
     std::unique_ptr<ConnectionPool> _connectionPool;
     std::unique_ptr<RedirectHandler> _redirectHandler;

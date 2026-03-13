@@ -50,7 +50,7 @@ jobs:
 
     - name: Create source archive
       run: |
-        VERSION=$(grep '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+        VERSION=$(jq -r '.version' library.json)
         ARCHIVE="ESPAsyncWebClient-${VERSION}.zip"
         zip -r "$ARCHIVE" src examples README.md LICENSE library.json library.properties
         echo "Created $ARCHIVE"
@@ -64,7 +64,7 @@ jobs:
     - name: Extract changelog for this version
       id: changelog
       run: |
-        VERSION=$(grep '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+        VERSION=$(jq -r '.version' library.json)
         echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
         # Extract the section for this version from CHANGELOG.md

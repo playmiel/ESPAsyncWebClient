@@ -23,7 +23,7 @@ jobs:
       - name: Extract version from library.json
         id: version
         run: |
-          VERSION=$(grep -m1 '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+          VERSION=$(jq -r '.version' library.json)
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Detected version: ${VERSION}"
 
