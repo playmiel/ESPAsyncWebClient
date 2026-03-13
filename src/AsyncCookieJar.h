@@ -1,5 +1,5 @@
-#ifndef COOKIE_JAR_H
-#define COOKIE_JAR_H
+#ifndef ASYNC_COOKIE_JAR_H
+#define ASYNC_COOKIE_JAR_H
 
 #include <Arduino.h>
 #include <vector>
@@ -7,9 +7,9 @@
 
 class AsyncHttpClient;
 
-class CookieJar {
+class AsyncCookieJar {
   public:
-    explicit CookieJar(AsyncHttpClient* client);
+    explicit AsyncCookieJar(AsyncHttpClient* client);
 
     void clearCookies();
     void setAllowCookieDomainAttribute(bool enable);
@@ -51,4 +51,4 @@ class CookieJar {
     std::vector<StoredCookie> _cookies;
 };
 
-#endif // COOKIE_JAR_H
+#endif // ASYNC_COOKIE_JAR_H

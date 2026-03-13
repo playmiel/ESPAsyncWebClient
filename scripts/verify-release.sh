@@ -10,8 +10,7 @@ pass() { echo "[OK] $1"; }
 if [[ ! -f library.json ]]; then fail "library.json missing"; fi
 if [[ ! -f library.properties ]]; then fail "library.properties missing"; fi
 
-# Extract the first occurrence of a JSON key named "version" (top-level package version)
-VERSION_JSON=$(grep -m1 '"version"' library.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+VERSION_JSON=$(jq -r '.version' library.json)
 VERSION_PROP=$(grep '^version=' library.properties | cut -d'=' -f2)
 
 [[ -n "${VERSION_JSON}" ]] || fail "Could not extract version from library.json"

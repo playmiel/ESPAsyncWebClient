@@ -25,7 +25,7 @@
 #include <freertos/semphr.h>
 #endif
 
-class CookieJar;
+class AsyncCookieJar;
 class ConnectionPool;
 class RedirectHandler;
 
@@ -111,7 +111,7 @@ class AsyncHttpClient {
     void loop(); // manual timeout / queue progression
 
   private:
-    friend class CookieJar;
+    friend class AsyncCookieJar;
     friend class ConnectionPool;
     friend class RedirectHandler;
 
@@ -200,7 +200,8 @@ class AsyncHttpClient {
     AsyncHttpTLSConfig _defaultTlsConfig;
     bool _keepAliveEnabled = false;
     uint32_t _keepAliveIdleMs = 5000;
-    std::unique_ptr<CookieJar> _cookieJar;
+    std::atomic_bool _inTryDequeue{false}; // cross-task reentrancy guard
+    std::unique_ptr<AsyncCookieJar> _cookieJar;
     std::unique_ptr<ConnectionPool> _connectionPool;
     std::unique_ptr<RedirectHandler> _redirectHandler;
 
