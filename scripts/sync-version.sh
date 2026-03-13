@@ -42,7 +42,8 @@ with open(path, "w", encoding="utf-8", newline="\n") as f:
 PY
   echo "  ✓ library.json"
 else
-  echo "  ✗ library.json not found"
+  echo "  ✗ library.json not found (aborting)" >&2
+  exit 1
 fi
 
 # 2. library.properties
@@ -66,7 +67,8 @@ with open(path, "w", encoding="utf-8", newline="\n") as f:
 PY
   echo "  ✓ library.properties"
 else
-  echo "  ✗ library.properties not found"
+  echo "  ✗ library.properties not found (aborting)" >&2
+  exit 1
 fi
 
 # 3. src/HttpCommon.h
@@ -92,7 +94,8 @@ with open(path, "w", encoding="utf-8", newline="\n") as f:
 PY
   echo "  ✓ src/HttpCommon.h"
 else
-  echo "  ✗ src/HttpCommon.h not found"
+  echo "  ✗ src/HttpCommon.h not found (aborting)" >&2
+  exit 1
 fi
 
 echo ""
