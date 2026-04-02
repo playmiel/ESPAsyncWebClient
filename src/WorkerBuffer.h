@@ -5,7 +5,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <deque>
 #include <memory>
 #include <freertos/FreeRTOS.h>
@@ -27,7 +26,14 @@ struct WorkerItem {
     uint8_t* data    = nullptr; // heap_caps_malloc'd — only for Type::Data
     size_t   len     = 0;       // only for Type::Data
     HttpClientError errorCode = CONNECTION_FAILED; // only for Type::Error
-    char errorMsg[64]{};        // only for Type::Error
+    static constexpr size_t kErrorMsgMaxLen = 64;
+    char errorMsg[kErrorMsgMaxLen]{};  // only for Type::Error
+
+    WorkerItem() = default;
+    WorkerItem(const WorkerItem&) = delete;
+    WorkerItem& operator=(const WorkerItem&) = delete;
+    WorkerItem(WorkerItem&&) = default;
+    WorkerItem& operator=(WorkerItem&&) = default;
 };
 
 class WorkerBuffer {
@@ -48,8 +54,6 @@ class WorkerBuffer {
 
     // Blocks worker task until an item is available.
     void waitForItem();
-
-    bool isEmpty() const;
 
   private:
     void enqueue(WorkerItem&& item);
