@@ -507,10 +507,17 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
         nullptr);
     context->transport->setDataHandler(
         [this, ctxShared](void* /*arg*/, AsyncTransport* t, void* data, size_t len) {
-            (void)t;
             if (ctxShared->cancelled.load())
                 return;
+#ifdef ARDUINO_ARCH_ESP32
+            if (!_workerBuffer.pushData(ctxShared, static_cast<char*>(data), len)) {
+                // Buffer at max capacity — close transport to trigger disconnect/error path
+                if (t) t->close();
+            }
+#else
+            (void)t;
             handleData(ctxShared.get(), static_cast<char*>(data), len);
+#endif
         },
         nullptr);
     context->transport->setDisconnectHandler(
@@ -518,7 +525,11 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
             (void)t;
             if (ctxShared->cancelled.load())
                 return;
+#ifdef ARDUINO_ARCH_ESP32
+            _workerBuffer.pushDisconnect(ctxShared);
+#else
             handleDisconnect(ctxShared.get());
+#endif
         },
         nullptr);
     context->transport->setErrorHandler(
@@ -526,7 +537,11 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
             (void)t;
             if (ctxShared->cancelled.load())
                 return;
+#ifdef ARDUINO_ARCH_ESP32
+            _workerBuffer.pushError(ctxShared, error, message);
+#else
             handleTransportError(ctxShared.get(), error, message);
+#endif
         },
         nullptr);
 
