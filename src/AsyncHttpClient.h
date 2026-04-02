@@ -19,6 +19,9 @@
 #include "GzipDecoder.h"
 #endif
 #include <AsyncTCP.h>
+#ifdef ARDUINO_ARCH_ESP32
+#include "WorkerBuffer.h"
+#endif
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -204,6 +207,12 @@ class AsyncHttpClient {
     std::unique_ptr<AsyncCookieJar> _cookieJar;
     std::unique_ptr<ConnectionPool> _connectionPool;
     std::unique_ptr<RedirectHandler> _redirectHandler;
+#ifdef ARDUINO_ARCH_ESP32
+    WorkerBuffer _workerBuffer;
+    TaskHandle_t _workerTaskHandle = nullptr;
+    static void _workerTaskThunk(void* param);
+    void _workerLoop();
+#endif
 
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     mutable SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
