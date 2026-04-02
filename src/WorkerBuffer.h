@@ -10,6 +10,7 @@
 #include <memory>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
 #include "HttpCommon.h"
 
 #ifndef ASYNC_HTTP_RING_BUFFER_SIZE
