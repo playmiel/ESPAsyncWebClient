@@ -13,6 +13,9 @@
 #include "AsyncCookieJar.h"
 #include "HttpHelpers.h"
 #include "RedirectHandler.h"
+#ifdef ARDUINO_ARCH_ESP32
+#include <esp_heap_caps.h>
+#endif
 
 static constexpr size_t kMaxChunkSizeLineLen = 64;
 static constexpr size_t kMaxChunkTrailerLineLen = 256;
@@ -27,6 +30,17 @@ AsyncHttpClient::AsyncHttpClient()
     _cookieJar.reset(new AsyncCookieJar(this));
     _connectionPool.reset(new ConnectionPool(this));
     _redirectHandler.reset(new RedirectHandler(this));
+#ifdef ARDUINO_ARCH_ESP32
+    xTaskCreatePinnedToCore(
+        _workerTaskThunk,   // entry
+        "AsyncHttpWorker",  // name
+        8192,               // stack words
+        this,               // param
+        2,                  // priority
+        &_workerTaskHandle, // handle out
+        tskNO_AFFINITY      // any core
+    );
+#endif
 #if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     // Create recursive mutex for shared containers when auto-loop may run in background
     _reqMutex = xSemaphoreCreateRecursiveMutex();
@@ -45,6 +59,13 @@ AsyncHttpClient::AsyncHttpClient()
 }
 
 AsyncHttpClient::~AsyncHttpClient() {
+#ifdef ARDUINO_ARCH_ESP32
+    if (_workerTaskHandle) {
+        TaskHandle_t h = _workerTaskHandle;
+        _workerTaskHandle = nullptr;
+        vTaskDelete(h);
+    }
+#endif
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     if (_autoLoopTaskHandle) {
         TaskHandle_t h = _autoLoopTaskHandle;
@@ -89,6 +110,43 @@ void AsyncHttpClient::_autoLoopTaskThunk(void* param) {
     }
 }
 #endif
+
+#ifdef ARDUINO_ARCH_ESP32
+void AsyncHttpClient::_workerTaskThunk(void* param) {
+    static_cast<AsyncHttpClient*>(param)->_workerLoop();
+}
+
+void AsyncHttpClient::_workerLoop() {
+    while (true) {
+        _workerBuffer.waitForItem();
+        WorkerItem item;
+        while (_workerBuffer.pop(item)) {
+            auto ctx = std::static_pointer_cast<RequestContext>(item.ctx);
+            if (!ctx || ctx->cancelled.load()) {
+                if (item.data) {
+                    heap_caps_free(item.data);
+                    item.data = nullptr;
+                }
+                continue;
+            }
+            switch (item.type) {
+                case WorkerItem::Type::Data:
+                    handleData(ctx.get(), reinterpret_cast<char*>(item.data), item.len);
+                    // heap_caps_free works for both heap_caps_malloc and malloc on ESP32
+                    heap_caps_free(item.data);
+                    item.data = nullptr;
+                    break;
+                case WorkerItem::Type::Disconnect:
+                    handleDisconnect(ctx.get());
+                    break;
+                case WorkerItem::Type::Error:
+                    handleTransportError(ctx.get(), item.errorCode, item.errorMsg);
+                    break;
+            }
+        }
+    }
+}
+#endif // ARDUINO_ARCH_ESP32
 
 uint32_t AsyncHttpClient::get(const char* url, SuccessCallback onSuccess, ErrorCallback onError) {
     return makeRequest(HTTP_METHOD_GET, url, nullptr, onSuccess, onError);
