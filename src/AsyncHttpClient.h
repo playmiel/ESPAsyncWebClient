@@ -214,7 +214,7 @@ class AsyncHttpClient {
     void _workerLoop();
 #endif
 
-#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+#ifdef ARDUINO_ARCH_ESP32
     mutable SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
 #endif
 

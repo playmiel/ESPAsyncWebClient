@@ -41,8 +41,8 @@ AsyncHttpClient::AsyncHttpClient()
         tskNO_AFFINITY      // any core
     );
 #endif
-#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
-    // Create recursive mutex for shared containers when auto-loop may run in background
+#ifdef ARDUINO_ARCH_ESP32
+    // Create recursive mutex for shared containers (used by worker task + auto-loop)
     _reqMutex = xSemaphoreCreateRecursiveMutex();
 #endif
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
@@ -73,7 +73,7 @@ AsyncHttpClient::~AsyncHttpClient() {
         vTaskDelete(h);
     }
 #endif
-#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+#ifdef ARDUINO_ARCH_ESP32
     if (_reqMutex) {
         vSemaphoreDelete(_reqMutex);
         _reqMutex = nullptr;
@@ -85,7 +85,7 @@ AsyncHttpClient::~AsyncHttpClient() {
     }
 }
 
-#if defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
+#ifdef ARDUINO_ARCH_ESP32
 void AsyncHttpClient::lock() const {
     if (_reqMutex)
         xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
@@ -129,6 +129,7 @@ void AsyncHttpClient::_workerLoop() {
                 }
                 continue;
             }
+            lock();
             switch (item.type) {
                 case WorkerItem::Type::Data:
                     handleData(ctx.get(), reinterpret_cast<char*>(item.data), item.len);
@@ -143,6 +144,7 @@ void AsyncHttpClient::_workerLoop() {
                     handleTransportError(ctx.get(), item.errorCode, item.errorMsg);
                     break;
             }
+            unlock();
         }
     }
 }
