@@ -31,19 +31,18 @@ AsyncHttpClient::AsyncHttpClient()
     _connectionPool.reset(new ConnectionPool(this));
     _redirectHandler.reset(new RedirectHandler(this));
 #ifdef ARDUINO_ARCH_ESP32
-    xTaskCreatePinnedToCore(
-        _workerTaskThunk,   // entry
-        "AsyncHttpWorker",  // name
-        8192,               // stack words
-        this,               // param
-        2,                  // priority
-        &_workerTaskHandle, // handle out
-        tskNO_AFFINITY      // any core
-    );
+    // Create the shared-state mutex before any background task can call back into the client.
+    _reqMutex = xSemaphoreCreateRecursiveMutex();
 #endif
 #ifdef ARDUINO_ARCH_ESP32
-    // Create recursive mutex for shared containers (used by worker task + auto-loop)
-    _reqMutex = xSemaphoreCreateRecursiveMutex();
+    xTaskCreatePinnedToCore(_workerTaskThunk,   // entry
+                            "AsyncHttpWorker",  // name
+                            8192,               // stack words
+                            this,               // param
+                            2,                  // priority
+                            &_workerTaskHandle, // handle out
+                            tskNO_AFFINITY      // any core
+    );
 #endif
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     // Optional: spawn a lightweight auto-loop task so users don't need to call client.loop() manually.
@@ -87,17 +86,43 @@ AsyncHttpClient::~AsyncHttpClient() {
 
 #ifdef ARDUINO_ARCH_ESP32
 void AsyncHttpClient::lock() const {
-    if (_reqMutex)
+    if (_reqMutex) {
         xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
+        TaskHandle_t current = xTaskGetCurrentTaskHandle();
+        if (_reqMutexOwner.load(std::memory_order_relaxed) == current) {
+            _reqMutexDepth.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            _reqMutexOwner.store(current, std::memory_order_relaxed);
+            _reqMutexDepth.store(1, std::memory_order_relaxed);
+        }
+    }
 }
 void AsyncHttpClient::unlock() const {
-    if (_reqMutex)
+    if (_reqMutex) {
+        TaskHandle_t current = xTaskGetCurrentTaskHandle();
+        uint16_t depth = _reqMutexDepth.load(std::memory_order_relaxed);
+        if (_reqMutexOwner.load(std::memory_order_relaxed) == current && depth > 0) {
+            depth = static_cast<uint16_t>(depth - 1);
+            _reqMutexDepth.store(depth, std::memory_order_relaxed);
+            if (depth == 0)
+                _reqMutexOwner.store(nullptr, std::memory_order_relaxed);
+        }
         xSemaphoreGiveRecursive(_reqMutex);
+    }
 }
 #else
 void AsyncHttpClient::lock() const {}
 void AsyncHttpClient::unlock() const {}
 #endif
+
+bool AsyncHttpClient::isLockHeldByCurrentTask() const {
+#ifdef ARDUINO_ARCH_ESP32
+    return _reqMutexOwner.load(std::memory_order_relaxed) == xTaskGetCurrentTaskHandle() &&
+           _reqMutexDepth.load(std::memory_order_relaxed) > 0;
+#else
+    return false;
+#endif
+}
 
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
 void AsyncHttpClient::_autoLoopTaskThunk(void* param) {
@@ -131,20 +156,21 @@ void AsyncHttpClient::_workerLoop() {
             }
             lock();
             switch (item.type) {
-                case WorkerItem::Type::Data:
-                    handleData(ctx.get(), reinterpret_cast<char*>(item.data), item.len);
-                    // heap_caps_free works for both heap_caps_malloc and malloc on ESP32
-                    heap_caps_free(item.data);
-                    item.data = nullptr;
-                    break;
-                case WorkerItem::Type::Disconnect:
-                    handleDisconnect(ctx.get());
-                    break;
-                case WorkerItem::Type::Error:
-                    handleTransportError(ctx.get(), item.errorCode, item.errorMsg);
-                    break;
+            case WorkerItem::Type::Data:
+                handleData(ctx.get(), reinterpret_cast<char*>(item.data), item.len);
+                // heap_caps_free works for both heap_caps_malloc and malloc on ESP32
+                heap_caps_free(item.data);
+                item.data = nullptr;
+                break;
+            case WorkerItem::Type::Disconnect:
+                handleDisconnect(ctx.get());
+                break;
+            case WorkerItem::Type::Error:
+                handleTransportError(ctx.get(), item.errorCode, item.errorMsg);
+                break;
             }
             unlock();
+            dispatchCallbacks();
         }
     }
 }
@@ -212,8 +238,17 @@ void AsyncHttpClient::clearHeaders() {
 }
 
 void AsyncHttpClient::setTimeout(uint32_t timeout) {
+    lock();
     _defaultTimeout = timeout;
+    unlock();
 }
+
+void AsyncHttpClient::setDefaultConnectTimeout(uint32_t ms) {
+    lock();
+    _defaultConnectTimeout = ms;
+    unlock();
+}
+
 void AsyncHttpClient::setUserAgent(const char* userAgent) {
     lock();
     _defaultUserAgent = userAgent ? String(userAgent) : String();
@@ -268,6 +303,19 @@ void AsyncHttpClient::setDefaultTlsConfig(const AsyncHttpTLSConfig& config) {
     _defaultTlsConfig = config;
     if (_defaultTlsConfig.handshakeTimeoutMs == 0)
         _defaultTlsConfig.handshakeTimeoutMs = 12000;
+    unlock();
+}
+
+AsyncHttpTLSConfig AsyncHttpClient::getDefaultTlsConfig() const {
+    lock();
+    AsyncHttpTLSConfig cfg = _defaultTlsConfig;
+    unlock();
+    return cfg;
+}
+
+void AsyncHttpClient::onBodyChunk(BodyChunkCallback cb) {
+    lock();
+    _bodyChunkCallback = cb;
     unlock();
 }
 
@@ -349,10 +397,14 @@ uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const 
     std::vector<HttpHeader> headersCopy;
     String uaCopy;
     uint32_t timeoutCopy;
+    bool keepAliveEnabledCopy;
+    uint32_t keepAliveIdleMsCopy;
     lock();
     headersCopy = _defaultHeaders; // copy
     uaCopy = _defaultUserAgent;    // copy
     timeoutCopy = _defaultTimeout; // copy
+    keepAliveEnabledCopy = _keepAliveEnabled;
+    keepAliveIdleMsCopy = _keepAliveIdleMs;
     unlock();
 
     std::unique_ptr<AsyncHttpRequest> request(new AsyncHttpRequest(method, String(url)));
@@ -360,9 +412,9 @@ uint32_t AsyncHttpClient::makeRequest(HttpMethod method, const char* url, const 
         request->setHeader(h.name, h.value);
     request->setUserAgent(uaCopy);
     request->setTimeout(timeoutCopy);
-    if (_keepAliveEnabled) {
+    if (keepAliveEnabledCopy) {
         request->setHeader("Connection", "keep-alive");
-        uint16_t timeoutSec = static_cast<uint16_t>(std::max<uint32_t>(1, _keepAliveIdleMs / 1000));
+        uint16_t timeoutSec = static_cast<uint16_t>(std::max<uint32_t>(1, keepAliveIdleMsCopy / 1000));
         request->setHeader("Keep-Alive", String("timeout=") + String(timeoutSec));
     }
     if (data) {
@@ -405,14 +457,21 @@ uint32_t AsyncHttpClient::request(std::unique_ptr<AsyncHttpRequest> request, Suc
     ctx->response = std::make_shared<AsyncHttpResponse>();
     ctx->onSuccess = onSuccess;
     ctx->onError = onError;
-    ctx->id = _nextRequestId++;
+    ctx->id = _nextRequestId.fetch_add(1, std::memory_order_relaxed);
+    lock();
     ctx->timing.connectTimeoutMs = _defaultConnectTimeout;
-    if (_keepAliveEnabled && ctx->request) {
+    ctx->keepAliveEnabledSnapshot = _keepAliveEnabled;
+    ctx->keepAliveIdleMsSnapshot = _keepAliveIdleMs;
+    ctx->maxBodySizeSnapshot = _maxBodySize;
+    ctx->maxHeaderBytesSnapshot = _maxHeaderBytes;
+    ctx->limitsSnapshotted = true;
+    unlock();
+    if (ctx->keepAliveEnabledSnapshot && ctx->request) {
         String conn = ctx->request->getHeader("Connection");
         if (conn.isEmpty())
             ctx->request->setHeader("Connection", "keep-alive");
         if (ctx->request->getHeader("Keep-Alive").isEmpty()) {
-            uint16_t timeoutSec = static_cast<uint16_t>(std::max<uint32_t>(1, _keepAliveIdleMs / 1000));
+            uint16_t timeoutSec = static_cast<uint16_t>(std::max<uint32_t>(1, ctx->keepAliveIdleMsSnapshot / 1000));
             ctx->request->setHeader("Keep-Alive", String("timeout=") + String(timeoutSec));
         }
     }
@@ -431,6 +490,7 @@ bool AsyncHttpClient::abort(uint32_t requestId) {
         if (ctx && ctx->id == requestId && !ctx->cancelled.load()) {
             unlock();
             triggerError(ctx, ABORTED, "Aborted by user");
+            dispatchCallbacks();
             return true;
         }
     }
@@ -446,6 +506,7 @@ bool AsyncHttpClient::abort(uint32_t requestId) {
     unlock();
     if (pending) {
         triggerError(pending.get(), ABORTED, "Aborted by user");
+        dispatchCallbacks();
         return true;
     }
     return false;
@@ -464,20 +525,20 @@ void AsyncHttpClient::executeOrQueue(std::shared_ptr<RequestContext> context) {
     RequestContext* ctx = _activeRequests.back().get();
     unlock();
     executeRequest(ctx);
+    dispatchCallbacks();
 }
 
 void AsyncHttpClient::executeRequest(RequestContext* context) {
     if (_cookieJar)
         _cookieJar->applyCookies(context->request.get());
     context->timing.connectStartMs = millis();
-    context->timing.connectTimeoutMs = _defaultConnectTimeout;
     context->resolvedTlsConfig = resolveTlsConfig(context->request.get());
     String connHeader = context->request->getHeader("Connection");
-    context->requestKeepAlive = _keepAliveEnabled && !equalsIgnoreCase(connHeader, "close");
+    context->requestKeepAlive = context->keepAliveEnabledSnapshot && !equalsIgnoreCase(connHeader, "close");
     AsyncTransport* pooled = nullptr;
     if (context->requestKeepAlive && _connectionPool)
         pooled = _connectionPool->checkoutPooledTransport(context->request.get(), context->resolvedTlsConfig,
-                                                          _keepAliveEnabled);
+                                                          context->keepAliveEnabledSnapshot);
     context->transport = pooled ? pooled : buildTransport(context);
     context->usingPooledConnection = pooled != nullptr;
     if (!context->transport) {
@@ -514,11 +575,13 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
 #ifdef ARDUINO_ARCH_ESP32
             if (!_workerBuffer.pushData(ctxShared, static_cast<char*>(data), len)) {
                 // Buffer at max capacity — close transport to trigger disconnect/error path
-                if (t) t->close();
+                if (t)
+                    t->close();
             }
 #else
             (void)t;
             handleData(ctxShared.get(), static_cast<char*>(data), len);
+            dispatchCallbacks();
 #endif
         },
         nullptr);
@@ -531,6 +594,7 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
             _workerBuffer.pushDisconnect(ctxShared);
 #else
             handleDisconnect(ctxShared.get());
+            dispatchCallbacks();
 #endif
         },
         nullptr);
@@ -543,6 +607,7 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
             _workerBuffer.pushError(ctxShared, error, message);
 #else
             handleTransportError(ctxShared.get(), error, message);
+            dispatchCallbacks();
 #endif
         },
         nullptr);
@@ -591,10 +656,11 @@ bool AsyncHttpClient::wouldExceedBodyLimit(RequestContext* context, size_t incom
         return false;
     if (!context)
         return true;
+    size_t maxBodySize = effectiveMaxBodySize(context);
     size_t current = context->receivedBodyLength;
-    if (current >= _maxBodySize)
+    if (current >= maxBodySize)
         return true;
-    return incoming > (_maxBodySize - current);
+    return incoming > (maxBodySize - current);
 }
 
 bool AsyncHttpClient::emitBodyBytes(RequestContext* context, const char* out, size_t outLen, bool storeBody,
@@ -611,9 +677,7 @@ bool AsyncHttpClient::emitBodyBytes(RequestContext* context, const char* out, si
         context->response->appendBody(out, outLen);
     }
     context->receivedBodyLength += outLen;
-    auto cb = _bodyChunkCallback;
-    if (cb)
-        cb(out, outLen, false);
+    queueBodyChunkCallback(out, outLen, false);
     return true;
 }
 
@@ -698,10 +762,11 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
         dataOffset = len; // all consumed into buffer
 
         int headerEnd = context->responseBuffer.indexOf("\r\n\r\n");
-        if (_maxHeaderBytes > 0) {
+        size_t maxHeaderBytes = effectiveMaxHeaderBytes(context);
+        if (maxHeaderBytes > 0) {
             size_t headerBytes = headerEnd != -1 ? static_cast<size_t>(headerEnd + 4)
                                                  : static_cast<size_t>(context->responseBuffer.length());
-            if (headerBytes > _maxHeaderBytes) {
+            if (headerBytes > maxHeaderBytes) {
                 triggerError(context, HEADERS_TOO_LARGE, "Response headers exceed configured maximum");
                 return;
             }
@@ -716,12 +781,12 @@ void AsyncHttpClient::handleData(RequestContext* context, char* data, size_t len
                 bool gzipActive = false;
 #endif
                 if (enforceLimit && !gzipActive && context->expectedContentLength > 0 &&
-                    context->expectedContentLength > _maxBodySize) {
+                    context->expectedContentLength > effectiveMaxBodySize(context)) {
                     triggerError(context, MAX_BODY_SIZE_EXCEEDED, "Body exceeds configured maximum");
                     return;
                 }
                 if (storeBody && !gzipActive && context->expectedContentLength > 0 && !context->chunk.chunked &&
-                    (!enforceLimit || context->expectedContentLength <= _maxBodySize)) {
+                    (!enforceLimit || context->expectedContentLength <= effectiveMaxBodySize(context))) {
                     context->response->reserveBody(context->expectedContentLength);
                 }
                 context->responseBuffer.remove(0, headerEnd + 4);
@@ -1067,14 +1132,12 @@ void AsyncHttpClient::processResponse(RequestContext* context) {
         return;
     if (_redirectHandler && _redirectHandler->handleRedirect(context))
         return;
-    auto cb = _bodyChunkCallback;
-    if (cb && !context->notifiedEndCallback) {
+    if (!context->notifiedEndCallback) {
         context->notifiedEndCallback = true;
-        cb(nullptr, 0, true);
+        queueBodyChunkCallback(nullptr, 0, true);
     }
     context->responseProcessed = true;
-    if (context->onSuccess)
-        context->onSuccess(context->response);
+    queueSuccessCallback(context->onSuccess, context->response);
     cleanup(context);
 }
 
@@ -1091,7 +1154,7 @@ void AsyncHttpClient::cleanup(RequestContext* context) {
                 context->request.get(), context->response, context->transport, context->responseProcessed,
                 context->requestKeepAlive, context->serverRequestedClose, context->chunk.chunked,
                 context->chunk.chunkedComplete, context->expectedContentLength, context->receivedContentLength,
-                _keepAliveEnabled);
+                context->keepAliveEnabledSnapshot);
         }
         if (recycle && _connectionPool) {
             _connectionPool->releaseConnectionToPool(context->transport, context->request.get(),
@@ -1123,15 +1186,113 @@ void AsyncHttpClient::triggerError(RequestContext* context, HttpClientError erro
     if (context->cancelled.load() || context->responseProcessed)
         return;
     context->responseProcessed = true;
-    if (context->onError)
-        context->onError(errorCode, errorMessage);
+    queueErrorCallback(context->onError, errorCode, errorMessage);
     cleanup(context);
+}
+
+void AsyncHttpClient::queueBodyChunkCallback(const char* data, size_t len, bool final) {
+    BodyChunkCallback cb;
+    lock();
+    cb = _bodyChunkCallback;
+    unlock();
+    if (!cb)
+        return;
+
+    PendingCallback pending;
+    pending.type = PendingCallback::Type::BodyChunk;
+    pending.bodyChunkCallback = cb;
+    pending.final = final;
+    if (data && len > 0)
+        pending.bodyData.assign(data, data + len);
+
+    lock();
+    _pendingCallbacks.push_back(std::move(pending));
+    unlock();
+    dispatchCallbacks();
+}
+
+void AsyncHttpClient::queueSuccessCallback(SuccessCallback cb, std::shared_ptr<AsyncHttpResponse> response) {
+    if (!cb)
+        return;
+    PendingCallback pending;
+    pending.type = PendingCallback::Type::Success;
+    pending.successCallback = cb;
+    pending.response = std::move(response);
+
+    lock();
+    _pendingCallbacks.push_back(std::move(pending));
+    unlock();
+    dispatchCallbacks();
+}
+
+void AsyncHttpClient::queueErrorCallback(ErrorCallback cb, HttpClientError errorCode, const char* errorMessage) {
+    if (!cb)
+        return;
+    PendingCallback pending;
+    pending.type = PendingCallback::Type::Error;
+    pending.errorCallback = cb;
+    pending.errorCode = errorCode;
+    pending.errorMessage = errorMessage ? String(errorMessage) : String();
+
+    lock();
+    _pendingCallbacks.push_back(std::move(pending));
+    unlock();
+    dispatchCallbacks();
+}
+
+void AsyncHttpClient::dispatchCallbacks() {
+    if (isLockHeldByCurrentTask())
+        return;
+
+    while (true) {
+        std::deque<PendingCallback> callbacks;
+        lock();
+        if (_dispatchingCallbacks || _pendingCallbacks.empty()) {
+            unlock();
+            return;
+        }
+        _dispatchingCallbacks = true;
+        callbacks.swap(_pendingCallbacks);
+        unlock();
+
+        for (auto& pending : callbacks) {
+            switch (pending.type) {
+            case PendingCallback::Type::BodyChunk:
+                if (pending.bodyChunkCallback) {
+                    const char* ptr = pending.bodyData.empty() ? nullptr : pending.bodyData.data();
+                    pending.bodyChunkCallback(ptr, pending.bodyData.size(), pending.final);
+                }
+                break;
+            case PendingCallback::Type::Success:
+                if (pending.successCallback)
+                    pending.successCallback(pending.response);
+                break;
+            case PendingCallback::Type::Error:
+                if (pending.errorCallback)
+                    pending.errorCallback(pending.errorCode, pending.errorMessage.c_str());
+                break;
+            }
+        }
+
+        lock();
+        _dispatchingCallbacks = false;
+        bool hasMore = !_pendingCallbacks.empty();
+        unlock();
+        if (!hasMore)
+            return;
+    }
 }
 
 void AsyncHttpClient::loop() {
     uint32_t now = millis();
+    bool keepAliveEnabled;
+    uint32_t keepAliveIdleMs;
+    lock();
+    keepAliveEnabled = _keepAliveEnabled;
+    keepAliveIdleMs = _keepAliveIdleMs;
+    unlock();
     if (_connectionPool)
-        _connectionPool->pruneIdleConnections(_keepAliveEnabled, _keepAliveIdleMs);
+        _connectionPool->pruneIdleConnections(keepAliveEnabled, keepAliveIdleMs);
     // Iterate safely even if callbacks remove entries: use index loop.
     lock();
     for (size_t i = 0; i < _activeRequests.size();) {
@@ -1175,6 +1336,7 @@ void AsyncHttpClient::loop() {
         // else do not advance: current i now refers to next element after erase
     }
     unlock();
+    dispatchCallbacks();
 }
 
 void AsyncHttpClient::tryDequeue() {
@@ -1192,6 +1354,7 @@ void AsyncHttpClient::tryDequeue() {
         RequestContext* ctx = _activeRequests.back().get();
         unlock();
         executeRequest(ctx);
+        dispatchCallbacks();
     }
     _inTryDequeue.store(false, std::memory_order_release);
 }
@@ -1222,13 +1385,31 @@ void AsyncHttpClient::sendStreamData(RequestContext* context) {
 }
 
 bool AsyncHttpClient::shouldEnforceBodyLimit(RequestContext* context) {
-    if (_maxBodySize == 0)
+    if (effectiveMaxBodySize(context) == 0)
         return false;
     if (!context || !context->request)
         return true;
     // Always enforce body limit even in streaming (noStoreBody) mode to protect
     // against a malicious server sending unbounded data.
     return true;
+}
+
+size_t AsyncHttpClient::effectiveMaxBodySize(RequestContext* context) const {
+    if (context && context->limitsSnapshotted)
+        return context->maxBodySizeSnapshot;
+    lock();
+    size_t maxBodySize = _maxBodySize;
+    unlock();
+    return maxBodySize;
+}
+
+size_t AsyncHttpClient::effectiveMaxHeaderBytes(RequestContext* context) const {
+    if (context && context->limitsSnapshotted)
+        return context->maxHeaderBytesSnapshot;
+    lock();
+    size_t maxHeaderBytes = _maxHeaderBytes;
+    unlock();
+    return maxHeaderBytes;
 }
 
 AsyncHttpTLSConfig AsyncHttpClient::resolveTlsConfig(const AsyncHttpRequest* request) const {

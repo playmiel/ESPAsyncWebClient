@@ -14,6 +14,9 @@ static String gLastBody;
 static std::vector<HttpHeader> gLastTrailers;
 static String gStreamedBody;
 static bool gStreamFinalCalled = false;
+static bool gDeferredSuccessCalled = false;
+static bool gDeferredBodyCalled = false;
+static bool gDeferredCallbackSawLock = false;
 
 static void resetState() {
     gSuccessCalled = false;
@@ -23,6 +26,9 @@ static void resetState() {
     gLastTrailers.clear();
     gStreamedBody = "";
     gStreamFinalCalled = false;
+    gDeferredSuccessCalled = false;
+    gDeferredBodyCalled = false;
+    gDeferredCallbackSawLock = false;
 }
 
 static String trailerValue(const char* name) {
@@ -144,6 +150,42 @@ static void test_chunk_body_limit_ignored_for_no_store_streaming() {
     TEST_ASSERT_TRUE(gStreamFinalCalled);
 }
 
+static void test_callbacks_are_deferred_until_client_lock_is_released() {
+    resetState();
+    AsyncHttpClient client;
+    client.onBodyChunk([&client](const char* data, size_t len, bool final) {
+        (void)data;
+        (void)len;
+        if (final)
+            return;
+        gDeferredBodyCalled = true;
+        gDeferredCallbackSawLock = gDeferredCallbackSawLock || client.isLockHeldByCurrentTask();
+    });
+    auto ctx = makeContext(client);
+    ctx->onSuccess = [&client](const std::shared_ptr<AsyncHttpResponse>& resp) {
+        (void)resp;
+        gDeferredSuccessCalled = true;
+        gDeferredCallbackSawLock = gDeferredCallbackSawLock || client.isLockHeldByCurrentTask();
+    };
+
+    String payload = "HTTP/1.1 200 OK\r\n"
+                     "Content-Length: 2\r\n"
+                     "\r\n"
+                     "OK";
+
+    client.lock();
+    client.handleData(ctx, const_cast<char*>(payload.c_str()), payload.length());
+    TEST_ASSERT_FALSE(gDeferredBodyCalled);
+    TEST_ASSERT_FALSE(gDeferredSuccessCalled);
+    client.unlock();
+
+    client.dispatchCallbacks();
+
+    TEST_ASSERT_TRUE(gDeferredBodyCalled);
+    TEST_ASSERT_TRUE(gDeferredSuccessCalled);
+    TEST_ASSERT_FALSE(gDeferredCallbackSawLock);
+}
+
 void setup() {
     delay(2000);
     UNITY_BEGIN();
@@ -151,6 +193,7 @@ void setup() {
     RUN_TEST(test_chunk_missing_crlf_is_error);
     RUN_TEST(test_chunk_body_limit_enforced);
     RUN_TEST(test_chunk_body_limit_ignored_for_no_store_streaming);
+    RUN_TEST(test_callbacks_are_deferred_until_client_lock_is_released);
     UNITY_END();
 }
 

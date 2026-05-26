@@ -32,6 +32,8 @@ class AsyncCookieJar;
 class ConnectionPool;
 class RedirectHandler;
 
+// Public AsyncHttpClient methods are internally synchronized on ESP32. User callbacks are dispatched outside the
+// client mutex so callbacks may start/abort requests or adjust configuration without re-entering locked internals.
 class AsyncHttpClient {
   public:
     typedef std::function<void(std::shared_ptr<AsyncHttpResponse>)> SuccessCallback;
@@ -66,9 +68,7 @@ class AsyncHttpClient {
     void clearHeaders();
     void setTimeout(uint32_t timeout); // total request timeout
     void setUserAgent(const char* userAgent);
-    void setDefaultConnectTimeout(uint32_t ms) {
-        _defaultConnectTimeout = ms;
-    }
+    void setDefaultConnectTimeout(uint32_t ms);
     void setFollowRedirects(bool enable, uint8_t maxHops = 3);
     void setMaxHeaderBytes(size_t maxBytes);
     void setMaxBodySize(size_t maxSize);
@@ -80,9 +80,7 @@ class AsyncHttpClient {
     void setTlsInsecure(bool allowInsecure);
     void setTlsHandshakeTimeout(uint32_t timeoutMs);
     void setKeepAlive(bool enable, uint16_t idleMs = 5000);
-    AsyncHttpTLSConfig getDefaultTlsConfig() const {
-        return _defaultTlsConfig;
-    }
+    AsyncHttpTLSConfig getDefaultTlsConfig() const;
     void clearCookies();
     // By default, Domain= attributes are rejected unless they exactly match the request host.
     // To allow a server to set cookies for a parent domain (e.g., Domain=example.com from api.example.com),
@@ -104,12 +102,7 @@ class AsyncHttpClient {
     bool abort(uint32_t requestId);
 
     // Global streaming body callback (applies for all responses unless overridden per-request in future)
-    void onBodyChunk(BodyChunkCallback cb) {
-        // Protect against concurrent auto-loop task updates
-        lock();
-        _bodyChunkCallback = cb;
-        unlock();
-    }
+    void onBodyChunk(BodyChunkCallback cb);
 
     void loop(); // manual timeout / queue progression
 
@@ -179,6 +172,11 @@ class AsyncHttpClient {
         bool headersSent = false;
         bool streamingBodyInProgress = false;
         bool requestKeepAlive = false;
+        bool keepAliveEnabledSnapshot = false;
+        uint32_t keepAliveIdleMsSnapshot = 5000;
+        size_t maxBodySizeSnapshot = 0;
+        size_t maxHeaderBytesSnapshot = 0;
+        bool limitsSnapshotted = false;
         bool serverRequestedClose = false;
         bool usingPooledConnection = false;
         AsyncHttpTLSConfig resolvedTlsConfig;
@@ -191,7 +189,7 @@ class AsyncHttpClient {
     uint32_t _defaultTimeout; // total
     String _defaultUserAgent;
     BodyChunkCallback _bodyChunkCallback;
-    uint32_t _nextRequestId = 1;
+    std::atomic<uint32_t> _nextRequestId{1};
     uint16_t _maxParallel = 0; // 0 => unlimited
     size_t _maxBodySize = 0;   // 0 => unlimited
     bool _followRedirects = false;
@@ -207,6 +205,22 @@ class AsyncHttpClient {
     std::unique_ptr<AsyncCookieJar> _cookieJar;
     std::unique_ptr<ConnectionPool> _connectionPool;
     std::unique_ptr<RedirectHandler> _redirectHandler;
+
+    struct PendingCallback {
+        enum class Type { BodyChunk, Success, Error };
+        Type type = Type::Success;
+        BodyChunkCallback bodyChunkCallback;
+        SuccessCallback successCallback;
+        ErrorCallback errorCallback;
+        std::shared_ptr<AsyncHttpResponse> response;
+        std::vector<char> bodyData;
+        bool final = false;
+        HttpClientError errorCode = CONNECTION_FAILED;
+        String errorMessage;
+    };
+
+    std::deque<PendingCallback> _pendingCallbacks;
+    bool _dispatchingCallbacks = false;
 #ifdef ARDUINO_ARCH_ESP32
     WorkerBuffer _workerBuffer;
     TaskHandle_t _workerTaskHandle = nullptr;
@@ -216,6 +230,8 @@ class AsyncHttpClient {
 
 #ifdef ARDUINO_ARCH_ESP32
     mutable SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
+    mutable std::atomic<TaskHandle_t> _reqMutexOwner{nullptr};
+    mutable std::atomic<uint16_t> _reqMutexDepth{0};
 #endif
 
     // Internal methods
@@ -236,9 +252,16 @@ class AsyncHttpClient {
     void processResponse(RequestContext* context);
     void cleanup(RequestContext* context);
     void triggerError(RequestContext* context, HttpClientError errorCode, const char* errorMessage);
+    void queueBodyChunkCallback(const char* data, size_t len, bool final);
+    void queueSuccessCallback(SuccessCallback cb, std::shared_ptr<AsyncHttpResponse> response);
+    void queueErrorCallback(ErrorCallback cb, HttpClientError errorCode, const char* errorMessage);
+    void dispatchCallbacks();
+    bool isLockHeldByCurrentTask() const;
     void tryDequeue();
     void sendStreamData(RequestContext* context);
     bool shouldEnforceBodyLimit(RequestContext* context);
+    size_t effectiveMaxBodySize(RequestContext* context) const;
+    size_t effectiveMaxHeaderBytes(RequestContext* context) const;
     AsyncTransport* buildTransport(RequestContext* context);
     AsyncHttpTLSConfig resolveTlsConfig(const AsyncHttpRequest* request) const;
 
