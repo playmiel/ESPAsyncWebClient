@@ -224,14 +224,16 @@ class AsyncHttpClient {
 #ifdef ARDUINO_ARCH_ESP32
     WorkerBuffer _workerBuffer;
     TaskHandle_t _workerTaskHandle = nullptr;
+    std::atomic<bool> _workerShouldExit{false}; // set by destructor to request worker shutdown
+    SemaphoreHandle_t _workerDoneSem = nullptr; // worker gives this once it has exited its loop
     static void _workerTaskThunk(void* param);
     void _workerLoop();
 #endif
 
 #ifdef ARDUINO_ARCH_ESP32
-    mutable SemaphoreHandle_t _reqMutex = nullptr; // recursive mutex
-    mutable std::atomic<TaskHandle_t> _reqMutexOwner{nullptr};
-    mutable std::atomic<uint16_t> _reqMutexDepth{0};
+    // Recursive mutex. Ownership/recursion depth are tracked natively by FreeRTOS; query the
+    // holder with xSemaphoreGetMutexHolder() (see isLockHeldByCurrentTask) — no manual bookkeeping.
+    mutable SemaphoreHandle_t _reqMutex = nullptr;
 #endif
 
     // Internal methods

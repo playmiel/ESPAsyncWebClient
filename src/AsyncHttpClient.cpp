@@ -35,6 +35,8 @@ AsyncHttpClient::AsyncHttpClient()
     _reqMutex = xSemaphoreCreateRecursiveMutex();
 #endif
 #ifdef ARDUINO_ARCH_ESP32
+    // Lets the destructor block until the worker has actually left its loop before we tear down state.
+    _workerDoneSem = xSemaphoreCreateBinary();
     xTaskCreatePinnedToCore(_workerTaskThunk,   // entry
                             "AsyncHttpWorker",  // name
                             8192,               // stack words
@@ -58,13 +60,6 @@ AsyncHttpClient::AsyncHttpClient()
 }
 
 AsyncHttpClient::~AsyncHttpClient() {
-#ifdef ARDUINO_ARCH_ESP32
-    if (_workerTaskHandle) {
-        TaskHandle_t h = _workerTaskHandle;
-        _workerTaskHandle = nullptr;
-        vTaskDelete(h);
-    }
-#endif
 #if !ASYNC_TCP_HAS_TIMEOUT && defined(ARDUINO_ARCH_ESP32) && defined(ASYNC_HTTP_ENABLE_AUTOLOOP)
     if (_autoLoopTaskHandle) {
         TaskHandle_t h = _autoLoopTaskHandle;
@@ -73,6 +68,20 @@ AsyncHttpClient::~AsyncHttpClient() {
     }
 #endif
 #ifdef ARDUINO_ARCH_ESP32
+    // Stop the worker cooperatively: it may be holding _reqMutex while in handleData(), so we must
+    // not vTaskDelete() it from here. Signal exit, wake it, and wait until it has left its loop
+    // (and self-deleted) before destroying the mutex it could otherwise still be holding.
+    if (_workerTaskHandle) {
+        _workerShouldExit.store(true, std::memory_order_release);
+        _workerBuffer.wake(); // unblock waitForItem()
+        if (_workerDoneSem)
+            xSemaphoreTake(_workerDoneSem, portMAX_DELAY);
+        _workerTaskHandle = nullptr;
+    }
+    if (_workerDoneSem) {
+        vSemaphoreDelete(_workerDoneSem);
+        _workerDoneSem = nullptr;
+    }
     if (_reqMutex) {
         vSemaphoreDelete(_reqMutex);
         _reqMutex = nullptr;
@@ -86,29 +95,12 @@ AsyncHttpClient::~AsyncHttpClient() {
 
 #ifdef ARDUINO_ARCH_ESP32
 void AsyncHttpClient::lock() const {
-    if (_reqMutex) {
+    if (_reqMutex)
         xSemaphoreTakeRecursive(_reqMutex, portMAX_DELAY);
-        TaskHandle_t current = xTaskGetCurrentTaskHandle();
-        if (_reqMutexOwner.load(std::memory_order_relaxed) == current) {
-            _reqMutexDepth.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            _reqMutexOwner.store(current, std::memory_order_relaxed);
-            _reqMutexDepth.store(1, std::memory_order_relaxed);
-        }
-    }
 }
 void AsyncHttpClient::unlock() const {
-    if (_reqMutex) {
-        TaskHandle_t current = xTaskGetCurrentTaskHandle();
-        uint16_t depth = _reqMutexDepth.load(std::memory_order_relaxed);
-        if (_reqMutexOwner.load(std::memory_order_relaxed) == current && depth > 0) {
-            depth = static_cast<uint16_t>(depth - 1);
-            _reqMutexDepth.store(depth, std::memory_order_relaxed);
-            if (depth == 0)
-                _reqMutexOwner.store(nullptr, std::memory_order_relaxed);
-        }
+    if (_reqMutex)
         xSemaphoreGiveRecursive(_reqMutex);
-    }
 }
 #else
 void AsyncHttpClient::lock() const {}
@@ -117,8 +109,8 @@ void AsyncHttpClient::unlock() const {}
 
 bool AsyncHttpClient::isLockHeldByCurrentTask() const {
 #ifdef ARDUINO_ARCH_ESP32
-    return _reqMutexOwner.load(std::memory_order_relaxed) == xTaskGetCurrentTaskHandle() &&
-           _reqMutexDepth.load(std::memory_order_relaxed) > 0;
+    // FreeRTOS already records the owning task of a (recursive) mutex; no manual tracking needed.
+    return _reqMutex && xSemaphoreGetMutexHolder(_reqMutex) == xTaskGetCurrentTaskHandle();
 #else
     return false;
 #endif
@@ -144,6 +136,8 @@ void AsyncHttpClient::_workerTaskThunk(void* param) {
 void AsyncHttpClient::_workerLoop() {
     while (true) {
         _workerBuffer.waitForItem();
+        if (_workerShouldExit.load(std::memory_order_acquire))
+            break;
         WorkerItem item;
         while (_workerBuffer.pop(item)) {
             auto ctx = std::static_pointer_cast<RequestContext>(item.ctx);
@@ -173,6 +167,11 @@ void AsyncHttpClient::_workerLoop() {
             dispatchCallbacks();
         }
     }
+    // Shutdown requested: tell the destructor we are out of the loop, then self-delete so we never
+    // get vTaskDelete()'d while holding _reqMutex. Any items still queued are freed by ~WorkerBuffer.
+    if (_workerDoneSem)
+        xSemaphoreGive(_workerDoneSem);
+    vTaskDelete(nullptr);
 }
 #endif // ARDUINO_ARCH_ESP32
 

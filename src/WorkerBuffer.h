@@ -57,6 +57,10 @@ class WorkerBuffer {
     // Blocks worker task until an item is available.
     void waitForItem();
 
+    // Wakes a worker blocked in waitForItem() without enqueuing anything.
+    // Used to unblock the worker for cooperative shutdown.
+    void wake();
+
   private:
     void enqueue(WorkerItem&& item);
 

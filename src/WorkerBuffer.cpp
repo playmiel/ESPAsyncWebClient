@@ -109,4 +109,9 @@ void WorkerBuffer::waitForItem() {
     xSemaphoreTake(_semaphore, portMAX_DELAY);
 }
 
+void WorkerBuffer::wake() {
+    if (!_semaphore) return;
+    xSemaphoreGive(_semaphore);
+}
+
 #endif // ARDUINO_ARCH_ESP32

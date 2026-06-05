@@ -470,9 +470,19 @@ Common HTTPS errors:
 
 ## Thread Safety
 
-- AsyncTCP callbacks run on the lwIP/WiFi task while `loop()` (or the auto-loop task) runs on a different core. Since v2.1 the library guards against use-after-free by holding `RequestContext` in `std::shared_ptr` (captured by transport lambdas) and using an `std::atomic<bool> cancelled` flag that is set before cleanup erases the context.
-- On ESP32 with `ASYNC_HTTP_ENABLE_AUTOLOOP`, a recursive mutex protects shared containers (`_activeRequests`, `_pendingQueue`, etc.).
-- Callbacks are still executed in the context of the network event loop — keep them lightweight and non-blocking.
+The client is internally synchronized on ESP32. The model has three actors:
+
+- **lwIP/WiFi task (`tcpip_thread`)** — where AsyncTCP fires data/disconnect/error callbacks. These handlers do *no* heavy work and never take the client lock: they only copy the payload into a thread-safe `WorkerBuffer` (PSRAM-backed) and return immediately, so the network task is never blocked.
+- **Worker task (`AsyncHttpWorker`)** — drains the `WorkerBuffer`, takes the recursive client mutex, runs the actual response parsing (`handleData`/`handleDisconnect`/`handleTransportError`), then releases the lock and dispatches user callbacks.
+- **Your task(s)** — the public API (`get`, `post`, `setHeader`, …) takes the same recursive mutex, so configuration and request submission are safe to call from any task.
+
+Key guarantees and details:
+
+- **Single recursive mutex** (`_reqMutex`) protects all shared state (`_activeRequests`, `_pendingQueue`, headers, etc.). It is recursive so a user callback may re-enter the client (start/abort a request, change config) without deadlocking. Ownership is queried via FreeRTOS's native `xSemaphoreGetMutexHolder()` — no manual depth bookkeeping.
+- **User callbacks run outside the lock.** Success/error/body-chunk callbacks are queued and dispatched by `dispatchCallbacks()` after the mutex is released, so you can safely call client methods from inside a callback. A callback may run either on the worker task or on the task that submitted work — do not assume a fixed thread, and keep callbacks non-blocking (a blocking callback can stall the worker).
+- **Use-after-free protection.** `RequestContext` is held in `std::shared_ptr` captured by the transport lambdas, and an `std::atomic<bool> cancelled` flag (set before cleanup erases the context) makes in-flight callbacks no-op safely.
+- **Back-pressure.** If the `WorkerBuffer` reaches its hard ceiling (`ASYNC_HTTP_RING_BUFFER_MAX`, default 64 KiB) the transport is closed, which surfaces as a normal disconnect/error on that request.
+- **Clean shutdown.** The destructor does not `vTaskDelete()` the worker (which could be mid-parse holding the lock). It sets an exit flag, wakes the worker, and waits for it to leave its loop and self-delete before destroying the mutex. Note: destroying an `AsyncHttpClient` while requests are still in flight is still best avoided — abort outstanding requests (or let them finish) before destruction, since open transports hold lambdas that reference the client.
 
 ## Dependencies
 
