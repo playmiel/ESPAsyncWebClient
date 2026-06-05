@@ -528,6 +528,16 @@ void AsyncHttpClient::executeOrQueue(std::shared_ptr<RequestContext> context) {
 }
 
 void AsyncHttpClient::executeRequest(RequestContext* context) {
+    // Serialize the whole request setup under the recursive request mutex.
+    // executeRequest() runs on the caller task (e.g. loopTask) while the worker
+    // task (_workerLoop) may concurrently run cleanup() for another request,
+    // which mutates _connectionPool / _activeRequests and resets request/response
+    // of its context. Without the lock, that concurrent mutation races against the
+    // cookie/TLS/pool/transport work below and can free context->request mid-setup
+    // (observed as a LoadProhibited crash in getHost().c_str() at the connect call).
+    // _reqMutex is recursive, so the synchronous triggerError()->cleanup()->lock()
+    // paths below remain safe.
+    lock();
     if (_cookieJar)
         _cookieJar->applyCookies(context->request.get());
     context->timing.connectStartMs = millis();
@@ -542,6 +552,7 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
     context->usingPooledConnection = pooled != nullptr;
     if (!context->transport) {
         triggerError(context, HTTPS_NOT_SUPPORTED, "HTTPS transport unavailable");
+        unlock();
         return;
     }
     if (context->usingPooledConnection)
@@ -549,22 +560,25 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
 
     // Find the shared_ptr for this context to capture in transport lambdas.
     // This keeps the RequestContext alive even after cleanup() erases it from _activeRequests.
+    // Already under the request lock held since the top of executeRequest().
     std::shared_ptr<RequestContext> ctxShared;
-    lock();
     for (auto& sp : _activeRequests) {
         if (sp.get() == context) {
             ctxShared = sp;
             break;
         }
     }
-    unlock();
 
     context->transport->setConnectHandler(
         [this, ctxShared](void* /*arg*/, AsyncTransport* t) {
             (void)t;
             if (ctxShared->cancelled.load())
                 return;
+            // Runs on the async_tcp task: serialize against worker/caller tasks
+            // that mutate this context (handleConnect touches request/transport).
+            lock();
             handleConnect(ctxShared.get());
+            unlock();
         },
         nullptr);
     context->transport->setDataHandler(
@@ -619,7 +633,17 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
             (void)t;
             if (ctxShared->cancelled.load())
                 return;
+#ifdef ARDUINO_ARCH_ESP32
+            // Defer to the worker task. triggerError() -> cleanup() deletes the
+            // transport (an AsyncClient owned by tcpip); deleting it inline from
+            // this tcpip/async_tcp callback is a use-after-free that corrupts the
+            // heap (surfaces later as a TLSF assert in an unrelated malloc).
+            // Mirrors the data/disconnect/error handlers above.
+            _workerBuffer.pushError(ctxShared, REQUEST_TIMEOUT, "Request timeout");
+#else
             triggerError(ctxShared.get(), REQUEST_TIMEOUT, "Request timeout");
+            dispatchCallbacks();
+#endif
         },
         nullptr);
 #else
@@ -630,8 +654,10 @@ void AsyncHttpClient::executeRequest(RequestContext* context) {
         handleConnect(context); // Already connected, just send request
     } else if (!context->transport->connect(context->request->getHost().c_str(), context->request->getPort())) {
         triggerError(context, CONNECTION_FAILED, "Failed to initiate connection");
+        unlock();
         return;
     }
+    unlock();
 }
 
 void AsyncHttpClient::handleConnect(RequestContext* context) {
